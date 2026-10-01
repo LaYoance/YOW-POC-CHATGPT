@@ -623,7 +623,31 @@ class SessionService:
         return ReconnectFlowStatus(
             wizard_status=self.wizard_status,
             elapsed_seconds=0,
-            timeout_seconds=settings.RECONNECT_TIMEOUT_SECONDS,
-            message=self.wizard_message,
             session_status=current_status.status,
         )
+
+    def get_reconnect_status(self) -> ReconnectFlowStatus:
+        """Returns the current status of the reconnection wizard."""
+        elapsed = int(time.time() - self.wizard_start_time) if self.wizard_start_time else 0
+        return ReconnectFlowStatus(
+            wizard_status=self.wizard_status,
+            elapsed_seconds=elapsed,
+            timeout_seconds=settings.RECONNECT_TIMEOUT_SECONDS,
+            message=self.wizard_message,
+        )
+
+    # Aliases for route compatibility
+    async def get_status_response(self) -> SessionStatusResponse:
+        return await self.get_current_session_status()
+
+    async def start_reconnect_wizard(self) -> ReconnectFlowStatus:
+        return await self.start_reconnect_flow()
+
+    async def import_session_data(
+        self,
+        cookies_input: Union[str, dict, list],
+        access_token: Optional[str] = None,
+        device_id: Optional[str] = None,
+    ) -> SessionStatusResponse:
+        """Imports cookies and optional token/device_id."""
+        return await self.import_session_cookies(cookies_input)

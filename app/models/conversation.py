@@ -80,7 +80,7 @@ class Conversation(BaseModel):
     last_synced_at: Optional[datetime] = None
     mapping: Optional[Dict[str, MessageNode]] = None
 
-    model_config = ConfigDict(from_attributes=True)
+    model_config = ConfigDict(from_attributes=True, protected_namespaces=())
 
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)

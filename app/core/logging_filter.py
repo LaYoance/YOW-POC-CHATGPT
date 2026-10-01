@@ -65,3 +65,7 @@ class SecretMaskingFilter(logging.Filter):
         text = cls.CF_CLEARANCE_PATTERN.sub(r'\g<1>[REDACTED_COOKIE]', text)
         text = cls.JWT_PATTERN.sub(lambda m: f"{m.group(0)[:6]}...[REDACTED_JWT]...{m.group(0)[-4:]}", text)
         return text
+
+
+# Alias for backward compatibility
+SensitiveDataFilter = SecretMaskingFilter
