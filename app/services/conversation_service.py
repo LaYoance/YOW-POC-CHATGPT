@@ -255,3 +255,103 @@ class ConversationService:
             messages=local_messages,
             total_messages=len(local_messages),
         )
+
+    async def download_interpreter_file(
+        self,
+        conversation_id: str,
+        sandbox_path: str,
+        message_id: Optional[str] = None,
+    ) -> Tuple[Any, str, str]:
+        """
+        Downloads a file generated in Code Interpreter sandbox for a conversation.
+        Caches file locally in .session_data/downloads/{conversation_id}/{filename}.
+        Returns (local_path, filename, media_type).
+        """
+        import mimetypes
+        from pathlib import Path
+        from app.config import settings
+
+        clean_path = sandbox_path.strip()
+        if clean_path.startswith("sandbox:"):
+            clean_path = clean_path[len("sandbox:"):]
+
+        filename = Path(clean_path).name
+        if not filename or filename in (".", ".."):
+            raise ValueError(f"Invalid sandbox path or filename: {sandbox_path}")
+
+        download_dir = settings.full_session_data_dir / "downloads" / conversation_id
+        download_dir.mkdir(parents=True, exist_ok=True)
+        target_file = download_dir / filename
+
+        # Return cached copy if available and non-empty
+        if target_file.exists() and target_file.stat().st_size > 0:
+            media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+            return target_file, filename, media_type
+
+        # Build candidate message IDs
+        candidates: List[str] = []
+        if message_id:
+            candidates.append(message_id)
+
+        # Look up candidate messages in SQLite if needed
+        try:
+            with self.conversation_repo.db.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    """
+                    SELECT id, parent_id, role, content_type
+                    FROM messages
+                    WHERE conversation_id = ?
+                      AND (content_text LIKE ? OR content_text LIKE ?)
+                    ORDER BY (role = 'assistant') DESC, created_at DESC
+                    """,
+                    (conversation_id, f"%{filename}%", f"%{clean_path}%"),
+                )
+                rows = cursor.fetchall()
+                for r in rows:
+                    mid = r[0]
+                    pid = r[1]
+                    if mid and mid not in candidates:
+                        candidates.append(mid)
+                    if pid and pid not in candidates:
+                        candidates.append(pid)
+        except Exception as e:
+            logger.warning(f"Failed to query messages for interpreter download: {e}")
+
+        if not candidates:
+            # Fallback to current_node_id of the conversation
+            conv = self.conversation_repo.get_conversation(conversation_id)
+            if conv and conv.current_node_id:
+                candidates.append(conv.current_node_id)
+
+        if not candidates:
+            raise ValueError(f"No message found associated with {sandbox_path} in conversation {conversation_id}")
+
+        last_error = None
+        download_url = None
+        for candidate_id in candidates:
+            try:
+                download_url = await self.transport_router.get_interpreter_download_url(
+                    conversation_id=conversation_id,
+                    message_id=candidate_id,
+                    sandbox_path=clean_path,
+                )
+                if download_url:
+                    break
+            except Exception as e:
+                last_error = e
+                logger.debug(f"Candidate {candidate_id} failed for {clean_path}: {e}")
+
+        if not download_url:
+            raise ValueError(f"Failed to obtain interpreter download URL for {clean_path}: {last_error}")
+
+        file_bytes = await self.transport_router.download_file_bytes(download_url)
+        target_file.write_bytes(file_bytes)
+        try:
+            target_file.chmod(0o600)
+        except OSError:
+            pass
+
+        media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+        return target_file, filename, media_type
+

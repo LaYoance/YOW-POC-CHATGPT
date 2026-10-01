@@ -357,3 +357,41 @@ class DirectHttpTransport(ChatGPTTransport):
             if isinstance(e, TransportError):
                 raise
             raise TransportError(f"DIRECT_HTTP send_message_stream failed: {e}", mode=self.mode) from e
+
+    async def get_interpreter_download_url(
+        self,
+        conversation_id: str,
+        message_id: str,
+        sandbox_path: str,
+    ) -> str:
+        headers = await self._get_auth_headers()
+        url = f"{self.base_url}/backend-api/conversation/{conversation_id}/interpreter/download"
+        params = {
+            "message_id": message_id,
+            "sandbox_path": sandbox_path,
+        }
+        try:
+            async with AsyncSession(impersonate=self._effective_impersonate) as client:
+                res = await client.get(url, headers=headers, params=params, timeout=20)
+                self._check_response_status(res.status_code, res.text)
+                data = res.json()
+                download_url = data.get("download_url") if isinstance(data, dict) else None
+                if not download_url:
+                    raise TransportError(f"No download_url in response: {res.text[:200]}", mode=self.mode)
+                return download_url
+        except Exception as e:
+            if isinstance(e, TransportError):
+                raise
+            raise TransportError(f"DIRECT_HTTP get_interpreter_download_url failed: {e}", mode=self.mode) from e
+
+    async def download_file_bytes(self, url: str) -> bytes:
+        headers = await self._get_auth_headers()
+        try:
+            async with AsyncSession(impersonate=self._effective_impersonate) as client:
+                res = await client.get(url, headers=headers, timeout=60)
+                self._check_response_status(res.status_code, res.text[:200] if res.status_code != 200 else "")
+                return res.content
+        except Exception as e:
+            if isinstance(e, TransportError):
+                raise
+            raise TransportError(f"DIRECT_HTTP download_file_bytes failed: {e}", mode=self.mode) from e

@@ -89,3 +89,18 @@ class ChatGPTTransport(ABC):
         {"event": "delta"|"done"|"error", "text": "...", "message_id": "...", "parent_id": "..."}
         """
         pass
+
+    @abstractmethod
+    async def get_interpreter_download_url(
+        self,
+        conversation_id: str,
+        message_id: str,
+        sandbox_path: str,
+    ) -> str:
+        """Retrieve pre-signed download URL for a file in code interpreter sandbox."""
+        pass
+
+    @abstractmethod
+    async def download_file_bytes(self, url: str) -> bytes:
+        """Download raw binary content using authenticated session credentials."""
+        pass

@@ -450,7 +450,7 @@ function appendMessageCard(role, text, id = null) {
 
   const roleLabel = role === "user" ? "Vous" : "ChatGPT";
   const avatarText = role === "user" ? "U" : "AI";
-  const htmlContent = renderMarkdown(text);
+  const htmlContent = renderMarkdown(text, id);
 
   card.innerHTML = `
     <div class="avatar ${role}">${avatarText}</div>
@@ -539,7 +539,11 @@ async function handleSendMessage() {
               scrollToBottom();
             } else if (data.event === "done") {
               accumulatedText = data.text || accumulatedText;
-              textEl.innerHTML = renderMarkdown(accumulatedText);
+              if (data.message_id) {
+                assistantCard.id = `msg-${data.message_id}`;
+                assistantCard.dataset.id = data.message_id;
+              }
+              textEl.innerHTML = renderMarkdown(accumulatedText, data.message_id || null);
               if (data.conversation_id) {
                 state.activeConversationId = data.conversation_id;
                 updateAppUrl(state.activeProjectId, data.conversation_id, false);
@@ -555,7 +559,7 @@ async function handleSendMessage() {
       }
     }
 
-    textEl.innerHTML = renderMarkdown(accumulatedText);
+    textEl.innerHTML = renderMarkdown(accumulatedText, assistantCard.dataset.id || null);
     await loadConversations();
   } catch (e) {
     textEl.innerHTML = `<span style="color: var(--danger-color);">Erreur réseau : ${e.message}</span>`;
@@ -638,15 +642,35 @@ function copyCode(btn) {
 }
 window.copyCode = copyCode;
 
-function renderMarkdown(text) {
+function renderMarkdown(text, messageId = null) {
   if (!text) return "";
   try {
     if (window.marked && typeof window.marked.parse === "function") {
       const cleanText = text.replace(/\r\n/g, "\n");
       const html = window.marked.parse(cleanText);
-      return html.replace(/<a\s+(?:[^>]*?\s+)?href="([^"]*)"([^>]*)>/gi, (match, href, rest) => {
+      return html.replace(/<a\s+(?:[^>]*?\s+)?href="([^"]*)"([^>]*)>(.*?)<\/a>/gis, (match, href, rest, inner) => {
+        const isSandbox = href.startsWith("sandbox:") || href.startsWith("/mnt/data/") || href.includes("sandbox:/mnt/data/");
+        if (isSandbox) {
+          const convId = state.activeConversationId || "";
+          const msgParam = messageId ? `&message_id=${encodeURIComponent(messageId)}` : "";
+          const downloadHref = convId
+            ? `/api/conversations/${encodeURIComponent(convId)}/interpreter/download?sandbox_path=${encodeURIComponent(href)}${msgParam}`
+            : "#";
+
+          const cleanPath = href.replace(/^sandbox:/, "");
+          const filename = cleanPath.split("/").pop() || "fichier";
+          return `<a href="${downloadHref}" download="${filename}" data-sandbox-href="${escapeHtml(href)}" class="sandbox-download-btn" title="Télécharger ${filename}">
+            <svg class="download-icon" viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            <span class="download-label">${inner || filename}</span>
+          </a>`;
+        }
+
         if (!rest.includes("target=")) {
-          return `<a href="${href}" target="_blank" rel="noopener noreferrer"${rest}>`;
+          return `<a href="${href}" target="_blank" rel="noopener noreferrer"${rest}>${inner}</a>`;
         }
         return match;
       });
@@ -656,6 +680,19 @@ function renderMarkdown(text) {
   }
   return escapeHtml(text);
 }
+
+// Delegated click handler for sandbox download links
+document.addEventListener("click", (e) => {
+  const downloadBtn = e.target.closest(".sandbox-download-btn");
+  if (!downloadBtn) return;
+  const currentHref = downloadBtn.getAttribute("href");
+  if ((!currentHref || currentHref === "#" || currentHref.includes("/api/conversations//")) && state.activeConversationId) {
+    const rawPath = downloadBtn.dataset.sandboxHref || "";
+    if (rawPath) {
+      downloadBtn.href = `/api/conversations/${encodeURIComponent(state.activeConversationId)}/interpreter/download?sandbox_path=${encodeURIComponent(rawPath)}`;
+    }
+  }
+});
 
 function escapeHtml(str) {
   if (!str) return "";

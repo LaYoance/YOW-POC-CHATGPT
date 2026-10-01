@@ -298,6 +298,35 @@ class TransportRouter:
             raise last_exception
         raise TransportError("All transports failed to stream message")
 
+    async def get_interpreter_download_url(
+        self,
+        conversation_id: str,
+        message_id: str,
+        sandbox_path: str,
+    ) -> str:
+        async def _call(transport):
+            return await transport.get_interpreter_download_url(
+                conversation_id=conversation_id,
+                message_id=message_id,
+                sandbox_path=sandbox_path,
+            )
+
+        return await self._execute_with_failover(
+            "get_interpreter_download_url",
+            conversation_id,
+            _call,
+        )
+
+    async def download_file_bytes(self, url: str) -> bytes:
+        async def _call(transport):
+            return await transport.download_file_bytes(url)
+
+        return await self._execute_with_failover(
+            "download_file_bytes",
+            url[:50],
+            _call,
+        )
+
     async def close(self) -> None:
         """Close browser resources in transports."""
         for t in self.transports.values():

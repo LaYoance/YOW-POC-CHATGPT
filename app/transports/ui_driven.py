@@ -324,3 +324,44 @@ class UiDrivenTransport(ChatGPTTransport):
                 except Exception:
                     pass
                 self._playwright = None
+
+    async def get_interpreter_download_url(
+        self,
+        conversation_id: str,
+        message_id: str,
+        sandbox_path: str,
+    ) -> str:
+        page = await self._ensure_browser()
+        import urllib.parse
+        qs = urllib.parse.urlencode({"message_id": message_id, "sandbox_path": sandbox_path})
+        url = f"{self.base_url}/backend-api/conversation/{conversation_id}/interpreter/download?{qs}"
+        script = """
+        async (targetUrl) => {
+            const res = await window.fetch(targetUrl, { credentials: 'include' });
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            return await res.json();
+        }
+        """
+        data = await page.evaluate(script, url)
+        if isinstance(data, dict) and data.get("download_url"):
+            return data["download_url"]
+        raise TransportError(f"UI_DRIVEN get_interpreter_download_url failed: {data}", mode=self.mode)
+
+    async def download_file_bytes(self, url: str) -> bytes:
+        page = await self._ensure_browser()
+        script = """
+        async (targetUrl) => {
+            const res = await window.fetch(targetUrl, { credentials: 'include' });
+            if (!res.ok) throw new Error("HTTP " + res.status);
+            const blob = await res.blob();
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+        }
+        """
+        import base64
+        b64 = await page.evaluate(script, url)
+        return base64.b64decode(b64)
