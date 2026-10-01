@@ -25,4 +25,4 @@ fi
 
 # Start FastAPI server
 echo "Serveur disponible sur http://127.0.0.1:8000"
-exec ./venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+exec ./venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload

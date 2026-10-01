@@ -40,10 +40,29 @@ const modalSessionEmail = document.getElementById("modal-session-email");
 // Initialize
 document.addEventListener("DOMContentLoaded", async () => {
   setupEventListeners();
+
+  window.addEventListener("popstate", async () => {
+    const convId = getConversationIdFromUrl();
+    if (convId) {
+      await selectConversation(convId, false, false);
+    } else {
+      state.activeConversationId = null;
+      activeTitle.textContent = "Nouvelle conversation";
+      messagesContainer.innerHTML = '<div style="text-align: center; color: var(--text-muted); margin-top: 100px;">Nouvelle conversation prête. Posez votre question.</div>';
+      document.querySelectorAll(".item-row").forEach(el => el.classList.remove("active"));
+    }
+  });
+
   await loadSessionStatus();
   await loadProjects();
   await loadConversations();
   await loadTransportStatus();
+
+  // Deep-link to conversation from URL
+  const initialConvId = getConversationIdFromUrl();
+  if (initialConvId) {
+    await selectConversation(initialConvId, false, false);
+  }
 });
 
 function setupEventListeners() {
@@ -136,6 +155,7 @@ function setupEventListeners() {
     activeTitle.textContent = "Nouvelle conversation";
     messagesContainer.innerHTML = '<div style="text-align: center; color: var(--text-muted); margin-top: 100px;">Nouvelle conversation prête. Posez votre question.</div>';
     document.querySelectorAll(".item-row").forEach(el => el.classList.remove("active"));
+    updateUrlForConversation(null);
   });
 
   btnSend.addEventListener("click", handleSendMessage);
@@ -279,11 +299,12 @@ async function loadConversations() {
     for (const c of state.conversations) {
       const row = document.createElement("div");
       row.className = "item-row" + (state.activeConversationId === c.id ? " active" : "");
+      row.dataset.id = c.id;
       row.innerHTML = `
         <span class="item-title">${escapeHtml(c.title || "Chat sans titre")}</span>
         <span class="item-meta">${c.id.substring(0, 8)}...</span>
       `;
-      row.addEventListener("click", () => selectConversation(c.id));
+      row.addEventListener("click", () => selectConversation(c.id, false, true));
       conversationsList.appendChild(row);
     }
   } catch (e) {
@@ -291,15 +312,26 @@ async function loadConversations() {
   }
 }
 
-async function selectConversation(convId, forceSync = false) {
+async function selectConversation(convId, forceSync = false, updateUrl = true) {
   state.activeConversationId = convId;
+  if (updateUrl) {
+    updateUrlForConversation(convId);
+  }
+
   const conv = state.conversations.find(c => c.id === convId);
   if (conv) {
     activeTitle.textContent = conv.title || "Chat";
   }
 
   // Highlight active row in sidebar
-  document.querySelectorAll("#conversations-list .item-row").forEach(el => el.classList.remove("active"));
+  document.querySelectorAll("#conversations-list .item-row").forEach(el => {
+    if (el.dataset.id === convId) {
+      el.classList.add("active");
+    } else {
+      el.classList.remove("active");
+    }
+  });
+
   // Re-render message branch
   messagesContainer.innerHTML = '<div style="text-align: center; color: var(--text-muted); margin-top: 50px;">Chargement de l\'historique (branche active)...</div>';
 
@@ -312,6 +344,10 @@ async function selectConversation(convId, forceSync = false) {
     }
     const branch = await res.json();
     state.activeBranchMessages = branch.messages || [];
+
+    if (branch.title) {
+      activeTitle.textContent = branch.title;
+    }
 
     renderActiveBranch(state.activeBranchMessages);
   } catch (e) {
@@ -413,6 +449,7 @@ async function handleSendMessage() {
               textEl.innerHTML = renderMarkdown(accumulatedText) + '<span class="cursor"></span>';
               if (data.conversation_id && !state.activeConversationId) {
                 state.activeConversationId = data.conversation_id;
+                updateUrlForConversation(data.conversation_id);
               }
               scrollToBottom();
             } else if (data.event === "done") {
@@ -420,6 +457,7 @@ async function handleSendMessage() {
               textEl.innerHTML = renderMarkdown(accumulatedText);
               if (data.conversation_id) {
                 state.activeConversationId = data.conversation_id;
+                updateUrlForConversation(data.conversation_id);
               }
               scrollToBottom();
             } else if (data.event === "error") {
@@ -542,4 +580,25 @@ function escapeHtml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+function getConversationIdFromUrl() {
+  const match = window.location.pathname.match(/^\/c\/([a-zA-Z0-9_-]+)/);
+  if (match) return match[1];
+
+  const params = new URLSearchParams(window.location.search);
+  return params.get("c") || params.get("conversation_id");
+}
+
+function updateUrlForConversation(convId) {
+  if (convId) {
+    const targetUrl = `/c/${convId}`;
+    if (window.location.pathname !== targetUrl) {
+      window.history.pushState({ conversationId: convId }, "", targetUrl);
+    }
+  } else {
+    if (window.location.pathname !== "/") {
+      window.history.pushState({ conversationId: null }, "", "/");
+    }
+  }
 }

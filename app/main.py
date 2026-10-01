@@ -77,6 +77,11 @@ if (STATIC_DIR / "index.html").exists():
     @app.get("/", include_in_schema=False)
     async def serve_index():
         return FileResponse(str(STATIC_DIR / "index.html"))
+
+    @app.get("/c/{conversation_id}", include_in_schema=False)
+    @app.get("/c/{conversation_id}/", include_in_schema=False)
+    async def serve_conversation(conversation_id: str):
+        return FileResponse(str(STATIC_DIR / "index.html"))
 else:
     @app.get("/", include_in_schema=False)
     async def serve_fallback_index():
