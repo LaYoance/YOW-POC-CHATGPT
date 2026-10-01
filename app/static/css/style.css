@@ -479,6 +479,84 @@ select.select-control {
   margin-bottom: 4px;
   display: flex;
   justify-content: space-between;
+  align-items: center;
+}
+
+/* Message actions & Anchor deep linking */
+.message-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-copy-msg-link {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all 0.15s ease-in-out;
+  opacity: 0.6;
+}
+
+.message-card:hover .btn-copy-msg-link,
+.message-card.targeted .btn-copy-msg-link {
+  opacity: 1;
+}
+
+.btn-copy-msg-link:hover {
+  background-color: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+.btn-copy-msg-link.copied {
+  color: var(--accent-color);
+  border-color: rgba(16, 163, 127, 0.4);
+  background-color: rgba(16, 163, 127, 0.15);
+  opacity: 1;
+}
+
+/* Targeted message highlighting */
+.target-indicator {
+  display: none;
+  background-color: var(--accent-color);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.message-card.targeted,
+.message-card:target {
+  border: 2px solid var(--accent-color) !important;
+  background-color: rgba(16, 163, 127, 0.08) !important;
+  box-shadow: 0 0 0 4px rgba(16, 163, 127, 0.25), 0 8px 24px rgba(0, 0, 0, 0.4) !important;
+  position: relative;
+  transition: all 0.3s ease-in-out;
+  animation: target-pulse 2s ease-in-out infinite alternate;
+}
+
+.message-card.targeted .target-indicator,
+.message-card:target .target-indicator {
+  display: inline-block;
+}
+
+@keyframes target-pulse {
+  0% {
+    box-shadow: 0 0 0 3px rgba(16, 163, 127, 0.2), 0 4px 16px rgba(0, 0, 0, 0.3);
+  }
+  100% {
+    box-shadow: 0 0 0 6px rgba(16, 163, 127, 0.4), 0 8px 24px rgba(16, 163, 127, 0.15);
+  }
 }
 
 /* Input Area */

@@ -45,6 +45,18 @@ document.addEventListener("DOMContentLoaded", async () => {
     await handleUrlNavigation(false);
   });
 
+  window.addEventListener("hashchange", () => {
+    const hash = window.location.hash;
+    if (hash) {
+      const rawId = hash.replace(/^#/, "").replace(/^msg-/, "");
+      if (rawId) {
+        highlightTargetedMessage(rawId, true);
+      }
+    } else {
+      document.querySelectorAll(".message-card.targeted").forEach(el => el.classList.remove("targeted"));
+    }
+  });
+
   await loadSessionStatus();
   await loadProjects();
   await loadTransportStatus();
@@ -392,7 +404,7 @@ async function selectConversation(convId, forceSync = false, updateUrl = true) {
       // Direct navigation: canonicalize URL if needed (e.g. /c/{id} -> /g/{proj}/c/{id})
       const expectedUrl = getAppUrl(state.activeProjectId, convId);
       if (window.location.pathname !== expectedUrl) {
-        updateAppUrl(state.activeProjectId, convId, true);
+        updateAppUrl(state.activeProjectId, convId, true, window.location.hash);
       }
     }
 
@@ -412,13 +424,29 @@ function renderActiveBranch(messages) {
   for (const m of messages) {
     appendMessageCard(m.role, m.content_text, m.id);
   }
+
+  // Check if URL has a message anchor hash (e.g. #msg-xxx or #xxx)
+  const hash = window.location.hash;
+  if (hash) {
+    const rawId = hash.replace(/^#/, "").replace(/^msg-/, "");
+    if (rawId) {
+      setTimeout(() => {
+        highlightTargetedMessage(rawId, true);
+      }, 50);
+      return;
+    }
+  }
+
   scrollToBottom();
 }
 
 function appendMessageCard(role, text, id = null) {
   const card = document.createElement("div");
   card.className = `message-card ${role}`;
-  if (id) card.dataset.id = id;
+  if (id) {
+    card.id = `msg-${id}`;
+    card.dataset.id = id;
+  }
 
   const roleLabel = role === "user" ? "Vous" : "ChatGPT";
   const avatarText = role === "user" ? "U" : "AI";
@@ -428,7 +456,17 @@ function appendMessageCard(role, text, id = null) {
     <div class="avatar ${role}">${avatarText}</div>
     <div class="message-body">
       <div class="message-header">
-        <span>${roleLabel}</span>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span>${roleLabel}</span>
+          <span class="target-indicator">Ciblé</span>
+        </div>
+        ${id ? `
+        <div class="message-actions">
+          <button class="btn-copy-msg-link" type="button" title="Copier le lien direct vers ce message" onclick="copyMessageLink('${id}', this)">
+            <span class="icon">🔗</span>
+            <span class="label">Lien</span>
+          </button>
+        </div>` : ''}
       </div>
       <div class="message-text">${htmlContent}</div>
     </div>
@@ -729,9 +767,13 @@ function getAppUrl(projectId, convId) {
   }
 }
 
-function updateAppUrl(projectId, convId, replace = false) {
-  const targetUrl = getAppUrl(projectId, convId);
-  if (window.location.pathname !== targetUrl) {
+function updateAppUrl(projectId, convId, replace = false, hash = null) {
+  let targetUrl = getAppUrl(projectId, convId);
+  if (hash) {
+    targetUrl += hash.startsWith("#") ? hash : `#${hash}`;
+  }
+  const currentFullUrl = window.location.pathname + window.location.hash;
+  if (currentFullUrl !== targetUrl) {
     const stateObj = { projectId, conversationId: convId };
     if (replace) {
       window.history.replaceState(stateObj, "", targetUrl);
@@ -790,3 +832,89 @@ async function handleUrlNavigation(updateUrl = false) {
     }
   }
 }
+
+function highlightTargetedMessage(msgId, scroll = true) {
+  if (!msgId) return;
+
+  // Remove targeted class from all message cards
+  document.querySelectorAll(".message-card.targeted").forEach(el => {
+    el.classList.remove("targeted");
+  });
+
+  // Find card by id="msg-{msgId}", id="{msgId}", or [data-id="{msgId}"]
+  const target = document.getElementById(`msg-${msgId}`) ||
+                 document.getElementById(msgId) ||
+                 document.querySelector(`.message-card[data-id="${msgId}"]`);
+
+  if (target) {
+    target.classList.add("targeted");
+    if (scroll) {
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }
+}
+
+function copyMessageLink(msgId, btn) {
+  if (!msgId) return;
+
+  const origin = window.location.origin;
+  const path = getAppUrl(state.activeProjectId, state.activeConversationId);
+  const targetHash = `#msg-${msgId}`;
+  const fullUrl = `${origin}${path}${targetHash}`;
+
+  const doFeedback = () => {
+    if (btn) {
+      const icon = btn.querySelector(".icon");
+      const label = btn.querySelector(".label");
+      btn.classList.add("copied");
+      if (icon) icon.textContent = "✓";
+      if (label) label.textContent = "Copié !";
+
+      setTimeout(() => {
+        btn.classList.remove("copied");
+        if (icon) icon.textContent = "🔗";
+        if (label) label.textContent = "Lien";
+      }, 2000);
+    }
+  };
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(fullUrl).then(doFeedback).catch(() => {
+      fallbackCopy(fullUrl, doFeedback);
+    });
+  } else {
+    fallbackCopy(fullUrl, doFeedback);
+  }
+
+  // Update hash in address bar without full page reload
+  if (window.location.hash !== targetHash) {
+    window.history.pushState(
+      { projectId: state.activeProjectId, conversationId: state.activeConversationId },
+      "",
+      `${path}${targetHash}`
+    );
+  }
+
+  // Highlight message in UI immediately
+  highlightTargetedMessage(msgId, true);
+}
+
+function fallbackCopy(text, callback) {
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.style.position = "fixed";
+  ta.style.opacity = "0";
+  document.body.appendChild(ta);
+  ta.select();
+  try {
+    document.execCommand("copy");
+    if (callback) callback();
+  } catch (e) {
+    console.error("Fallback copy failed:", e);
+  }
+  document.body.removeChild(ta);
+}
+
+window.copyMessageLink = copyMessageLink;
+window.highlightTargetedMessage = highlightTargetedMessage;
+
