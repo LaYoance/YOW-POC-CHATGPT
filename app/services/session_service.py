@@ -603,46 +603,73 @@ class SessionService:
 
             start_t = time.time()
             timeout_limit = settings.RECONNECT_TIMEOUT_SECONDS
-            while time.time() - start_t < timeout_limit:
-                await asyncio.sleep(2.0)
+            last_seen_cookies: List[Dict[str, Any]] = []
 
-                # Check if window was closed by user
-                if not context.pages or page.is_closed():
-                    cookies_list = await context.cookies()
-                    token_cookie = next(
-                        (c for c in cookies_list if c["name"] in ("__Secure-next-auth.session-token", "next-auth.session-token")),
-                        None
-                    )
-                    if token_cookie:
-                        cookies_dict = {c["name"]: c["value"] for c in cookies_list}
-                        await self.import_session_cookies(cookies_dict)
-                        self.wizard_status = ReconnectWizardStatus.SUCCESS
-                        self.wizard_message = "Authentification réussie !"
-                        return
-                    else:
+            while time.time() - start_t < timeout_limit:
+                await asyncio.sleep(1.5)
+
+                # Check if window or context was closed by user
+                try:
+                    if not context.pages or page.is_closed():
+                        token_cookie = next(
+                            (c for c in last_seen_cookies if c["name"].startswith("__Secure-next-auth.session-token") or c["name"].startswith("next-auth.session-token")),
+                            None
+                        )
+                        if token_cookie:
+                            cookies_dict = {c["name"]: c["value"] for c in last_seen_cookies}
+                            res = await self.import_session_cookies(cookies_dict)
+                            if res.is_valid or res.status == SessionStatus.VALID:
+                                self.wizard_status = ReconnectWizardStatus.SUCCESS
+                                self.wizard_message = "Authentification réussie ! Session enregistrée."
+                                return
                         self.wizard_status = ReconnectWizardStatus.CANCELLED
                         self.wizard_message = "Fenêtre du navigateur fermée par l'utilisateur."
                         return
 
-                cookies_list = await context.cookies()
+                    cookies_list = await context.cookies()
+                    last_seen_cookies = cookies_list
+                except Exception:
+                    token_cookie = next(
+                        (c for c in last_seen_cookies if c["name"].startswith("__Secure-next-auth.session-token") or c["name"].startswith("next-auth.session-token")),
+                        None
+                    )
+                    if token_cookie:
+                        cookies_dict = {c["name"]: c["value"] for c in last_seen_cookies}
+                        res = await self.import_session_cookies(cookies_dict)
+                        if res.is_valid or res.status == SessionStatus.VALID:
+                            self.wizard_status = ReconnectWizardStatus.SUCCESS
+                            self.wizard_message = "Authentification réussie ! Session enregistrée."
+                            return
+                    self.wizard_status = ReconnectWizardStatus.CANCELLED
+                    self.wizard_message = "Fenêtre du navigateur fermée."
+                    return
+
                 token_cookie = next(
-                    (c for c in cookies_list if c["name"] in ("__Secure-next-auth.session-token", "next-auth.session-token")),
+                    (c for c in cookies_list if c["name"].startswith("__Secure-next-auth.session-token") or c["name"].startswith("next-auth.session-token")),
                     None
                 )
                 if token_cookie:
+                    cookies_dict = {c["name"]: c["value"] for c in cookies_list}
                     try:
                         session_json = await page.evaluate(
                             '() => fetch("/api/auth/session").then(r => r.json()).catch(() => ({}))'
                         )
                         if isinstance(session_json, dict) and session_json.get("accessToken"):
-                            cookies_dict = {c["name"]: c["value"] for c in cookies_list}
-                            await self.import_session_cookies(cookies_dict)
-                            self.wizard_status = ReconnectWizardStatus.SUCCESS
-                            self.wizard_message = "Authentification réussie ! Session enregistrée."
-                            await asyncio.sleep(2.0)
-                            return
+                            res = await self.import_session_cookies(cookies_dict)
+                            if res.is_valid or res.status == SessionStatus.VALID:
+                                self.wizard_status = ReconnectWizardStatus.SUCCESS
+                                self.wizard_message = "Authentification réussie ! Session enregistrée."
+                                await asyncio.sleep(1.0)
+                                return
                     except Exception:
                         pass
+
+                    res = await self.import_session_cookies(cookies_dict)
+                    if res.is_valid or res.status == SessionStatus.VALID:
+                        self.wizard_status = ReconnectWizardStatus.SUCCESS
+                        self.wizard_message = "Authentification réussie ! Session enregistrée."
+                        await asyncio.sleep(1.0)
+                        return
 
             self.wizard_status = ReconnectWizardStatus.TIMEOUT
             self.wizard_message = f"Délai d'attente dépassé ({timeout_limit}s)."
@@ -719,3 +746,35 @@ class SessionService:
     ) -> SessionStatusResponse:
         """Imports cookies and optional token/device_id."""
         return await self.import_session_cookies(cookies_input)
+
+    async def sync_from_browser_profile(self) -> SessionStatusResponse:
+        """Extracts cookies directly from the saved Chromium user profile directory."""
+        chromium_profile = self.session_dir / "chromium"
+        if not chromium_profile.exists():
+            return await self.get_current_session_status()
+
+        playwright = None
+        try:
+            from playwright.async_api import async_playwright
+            playwright = await async_playwright().start()
+            context = await playwright.chromium.launch_persistent_context(
+                user_data_dir=str(chromium_profile),
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox"]
+            )
+            cookies_list = await context.cookies()
+            await context.close()
+            await playwright.stop()
+            playwright = None
+
+            cookies_dict = {c["name"]: c["value"] for c in cookies_list}
+            return await self.import_session_cookies(cookies_dict)
+        except Exception as e:
+            logger.error(f"Failed to sync from browser profile: {e}")
+            return await self.get_current_session_status()
+        finally:
+            if playwright:
+                try:
+                    await playwright.stop()
+                except Exception:
+                    pass

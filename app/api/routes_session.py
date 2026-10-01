@@ -54,3 +54,9 @@ async def start_reconnect(service: SessionService = Depends(get_session_service)
 async def get_reconnect_status(service: SessionService = Depends(get_session_service)):
     """Poll reconnection wizard status."""
     return service.get_reconnect_status()
+
+
+@router.post("/sync-browser", response_model=SessionStatusResponse)
+async def sync_browser_session(service: SessionService = Depends(get_session_service)):
+    """Extract cookies directly from the Chromium profile directory."""
+    return await service.sync_from_browser_profile()

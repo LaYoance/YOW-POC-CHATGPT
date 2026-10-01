@@ -32,6 +32,7 @@ const btnSessionModal = document.getElementById("btn-session-modal");
 const btnCloseModal = document.getElementById("btn-close-modal");
 const btnImportCookies = document.getElementById("btn-import-cookies");
 const btnReconnectWizard = document.getElementById("btn-reconnect-wizard");
+const btnSyncBrowser = document.getElementById("btn-sync-browser");
 const cookiesInput = document.getElementById("cookies-input");
 const modalSessionStatus = document.getElementById("modal-session-status");
 const modalSessionEmail = document.getElementById("modal-session-email");
@@ -83,6 +84,27 @@ function setupEventListeners() {
     } finally {
       btnReconnectWizard.disabled = false;
       btnReconnectWizard.textContent = "Lancer Reconnexion Navigateur";
+    }
+  });
+
+  btnSyncBrowser.addEventListener("click", async () => {
+    try {
+      btnSyncBrowser.disabled = true;
+      btnSyncBrowser.textContent = "Synchronisation...";
+      modalSessionStatus.textContent = "Lecture des cookies du profil Chromium...";
+
+      const res = await fetch("/api/session/sync-browser", { method: "POST" });
+      const data = await res.json();
+      modalSessionStatus.textContent = data.status + " : " + (data.message || data.message_fr);
+      if (data.status === "VALID" || data.is_valid) {
+        await loadSessionStatus();
+        setTimeout(() => sessionModal.classList.add("hidden"), 1200);
+      }
+    } catch (e) {
+      modalSessionStatus.textContent = "Erreur sync: " + e.message;
+    } finally {
+      btnSyncBrowser.disabled = false;
+      btnSyncBrowser.textContent = "Synchroniser session existante";
     }
   });
 
