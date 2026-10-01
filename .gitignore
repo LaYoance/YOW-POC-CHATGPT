@@ -30,3 +30,8 @@ htmlcov/
 # Virtual Environment
 venv/
 .venv/
+
+# Build & Release Artifacts
+dist/
+releases/
+
