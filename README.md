@@ -116,7 +116,17 @@ Ouvrez ensuite votre navigateur sur : **`http://127.0.0.1:8000`**
 ### Fonctionnalités de l'Interface Web
 - **Explorateur de Projets** : Découverte automatique des projets (`gizmo_id` `g-p-*`) et conversation racine.
 - **Liste des Conversations** : Pagination fluide et détection des fils de discussion rattachés aux projets.
-- **Arborescence & Branche Active** : Reconstitution précise du fil actif via CTE récursive (élimine les branches abandonnées).
+- **Arborescence & Branche Active** : Reconstitution précise du fil actif via CTE récursive (élimine les branches orphelines/abandonnées).
+- **Routage d'URL & Deep Linking** :
+  - Support des URLs canoniques `/g/{project_id}-{slug}/c/{conversation_id}` et `/c/{conversation_id}` avec résolution bidirectionnelle projet/conversation.
+  - Ancre directe vers chaque message (`#msg-{id}`) avec mise en valeur visuelle et bouton "Copier le lien direct".
+- **Rendu Markdown & Coloration Syntaxique** :
+  - Parsing GFM via Marked.js avec mise en page typographique (titres, listes, tables, citations).
+  - Coloration syntaxique automatique via Highlight.js avec en-têtes de code (langage) et bouton de copie en un clic.
+- **Téléchargement Fichiers Sandbox / Code Interpreter** :
+  - Détection automatique des liens de téléchargement générés par l'interpréteur de code (`sandbox:/mnt/data/...`).
+  - Transformation en boutons de téléchargement direct via le proxy local `/api/conversations/{id}/interpreter/download`.
+  - Cache local persistant sous `.session_data/downloads/{conv_id}/` (permissions 0600).
 - **Streaming Bidirectionnel** : Réception progressive des réponses via SSE (`EventSource`).
 - **Synchronisation en un clic** : Bouton "Synchroniser" pour récupérer les nouveaux échanges ajoutés sur le site officiel.
 - **Sélecteur de Transport** : Bascule dynamique entre `AUTO_FALLBACK`, `BROWSER_FETCH`, `DIRECT_HTTP` et `UI_DRIVEN`.
@@ -133,7 +143,10 @@ source venv/bin/activate
 # 1. Exécution des 8 critères d'acceptation (A1 à A8)
 pytest tests/test_acceptance_criteria.py -v
 
-# 2. Exécution de l'intégralité de la suite de tests (55 tests)
+# 2. Exécution des tests de téléchargement Code Interpreter
+pytest tests/test_interpreter_download.py -v
+
+# 3. Exécution de l'intégralité de la suite de tests (61 tests validés)
 pytest tests/ -v
 ```
 
