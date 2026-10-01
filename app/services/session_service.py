@@ -281,6 +281,17 @@ class SessionService:
 
         def _sync_request() -> Tuple[int, Dict[str, Any]]:
             try:
+                if url.startswith("https://"):
+                    try:
+                        from curl_cffi import requests as cffi_requests
+                        r = cffi_requests.get(url, headers=headers, impersonate="chrome124", timeout=15.0)
+                        try:
+                            body = r.json()
+                        except Exception:
+                            body = {}
+                        return r.status_code, body
+                    except Exception as cffi_err:
+                        logger.debug(f"curl_cffi get failed, falling back to requests: {cffi_err}")
                 r = requests.get(url, headers=headers, timeout=15.0)
                 try:
                     body = r.json()
@@ -345,6 +356,18 @@ class SessionService:
             data = {}
 
         if status_code == 403:
+            # DIRECT_HTTP was challenged by Cloudflare Turnstile.
+            # Attempt BROWSER_FETCH fallback from the local Chromium profile if available!
+            chromium_profile = self.session_dir / "chromium"
+            if chromium_profile.exists() and (self.base_url.startswith("https://") or "chatgpt.com" in self.base_url):
+                logger.info("DIRECT_HTTP 403 encountered; attempting BROWSER_FETCH fallback via Chromium profile...")
+                try:
+                    bf_res = await self.sync_from_browser_profile()
+                    if bf_res.is_valid or bf_res.status == SessionStatus.VALID:
+                        return bf_res
+                except Exception as bf_err:
+                    logger.warning(f"BROWSER_FETCH fallback error: {bf_err}")
+
             existing = await self._call_repo(self.session_repo.get_default)
             if existing:
                 await self._call_repo(self.session_repo.update_status, SessionStatus.CHALLENGE_REQUIRED)
@@ -381,6 +404,12 @@ class SessionService:
                 reconnect_guidance=f"Authentication server rejected session credentials with code {status_code}."
             )
 
+        return await self._persist_session_data(data, cookies, device_id)
+
+    async def _persist_session_data(
+        self, data: Dict[str, Any], cookies: Dict[str, str], device_id: str
+    ) -> SessionStatusResponse:
+        """Persists valid NextAuth session data to SQLite and resets circuit breaker."""
         access_token = data.get("accessToken")
         if not access_token:
             # NextAuth frequently returns HTTP 200 with {} or {"expires": ...} on unauthenticated requests
@@ -655,7 +684,8 @@ class SessionService:
                             '() => fetch("/api/auth/session").then(r => r.json()).catch(() => ({}))'
                         )
                         if isinstance(session_json, dict) and session_json.get("accessToken"):
-                            res = await self.import_session_cookies(cookies_dict)
+                            device_id = cookies_dict.get("oai-device-id") or str(uuid.uuid4())
+                            res = await self._persist_session_data(session_json, cookies_dict, device_id)
                             if res.is_valid or res.status == SessionStatus.VALID:
                                 self.wizard_status = ReconnectWizardStatus.SUCCESS
                                 self.wizard_message = "Authentification réussie ! Session enregistrée."
@@ -748,12 +778,13 @@ class SessionService:
         return await self.import_session_cookies(cookies_input)
 
     async def sync_from_browser_profile(self) -> SessionStatusResponse:
-        """Extracts cookies directly from the saved Chromium user profile directory."""
+        """Extracts cookies and session payload directly from the saved Chromium user profile directory."""
         chromium_profile = self.session_dir / "chromium"
         if not chromium_profile.exists():
             return await self.get_current_session_status()
 
         playwright = None
+        context = None
         try:
             from playwright.async_api import async_playwright
             playwright = await async_playwright().start()
@@ -763,16 +794,47 @@ class SessionService:
                 args=["--no-sandbox", "--disable-setuid-sandbox"]
             )
             cookies_list = await context.cookies()
+            cookies_dict = {c["name"]: c["value"] for c in cookies_list}
+
+            # Reassemble chunked cookies if needed
+            for base_key in ("__Secure-next-auth.session-token", "next-auth.session-token"):
+                if base_key not in cookies_dict or not cookies_dict[base_key]:
+                    reassembled = self.reassemble_cookie_chunks(cookies_dict, base_key)
+                    if reassembled:
+                        cookies_dict[base_key] = reassembled
+
+            device_id = cookies_dict.get("oai-device-id") or str(uuid.uuid4())
+            page = context.pages[0] if context.pages else await context.new_page()
+
+            # Attempt to evaluate /api/auth/session via BROWSER_FETCH (bypasses Cloudflare)
+            session_json = None
+            try:
+                await page.goto(f"{self.base_url}/", timeout=25000)
+                session_json = await page.evaluate(
+                    '() => fetch("/api/auth/session").then(r => r.json()).catch(e => ({}))'
+                )
+            except Exception as e:
+                logger.debug(f"Evaluate in sync_from_browser_profile: {e}")
+
             await context.close()
+            context = None
             await playwright.stop()
             playwright = None
 
-            cookies_dict = {c["name"]: c["value"] for c in cookies_list}
+            if isinstance(session_json, dict) and session_json.get("accessToken"):
+                logger.info("Successfully fetched accessToken via BROWSER_FETCH in Chromium.")
+                return await self._persist_session_data(session_json, cookies_dict, device_id)
+
             return await self.import_session_cookies(cookies_dict)
         except Exception as e:
-            logger.error(f"Failed to sync from browser profile: {e}")
+            logger.error(f"Failed to sync from browser profile: {e}", exc_info=True)
             return await self.get_current_session_status()
         finally:
+            if context:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
             if playwright:
                 try:
                     await playwright.stop()
