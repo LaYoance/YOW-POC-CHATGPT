@@ -155,6 +155,49 @@ class DatabaseManager:
         try:
             conn.executescript(SCHEMA_DDL)
             conn.commit()
+
+            # Check for legacy self-referential foreign key on messages(parent_id)
+            cur = conn.cursor()
+            fks = cur.execute("PRAGMA foreign_key_list(messages);").fetchall()
+            has_parent_fk = any(
+                (dict(fk).get("from") == "parent_id" if isinstance(fk, sqlite3.Row) else fk[3] == "parent_id")
+                for fk in fks
+            )
+            if has_parent_fk:
+                logger.info("Migrating messages table to drop obsolete parent_id self-referential foreign key...")
+                cur.execute("PRAGMA foreign_keys = OFF;")
+                cur.execute("ALTER TABLE messages RENAME TO _messages_old;")
+                cur.execute("""
+                CREATE TABLE messages (
+                    id TEXT PRIMARY KEY,
+                    conversation_id TEXT NOT NULL,
+                    parent_id TEXT,
+                    role TEXT NOT NULL,
+                    content_text TEXT NOT NULL,
+                    content_type TEXT DEFAULT 'text',
+                    metadata_json TEXT DEFAULT '{}',
+                    status TEXT DEFAULT 'finished_successfully',
+                    is_active_branch BOOLEAN DEFAULT 0,
+                    created_at TIMESTAMP NOT NULL,
+                    updated_at TIMESTAMP,
+                    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+                );
+                """)
+                cur.execute("""
+                INSERT INTO messages (
+                    id, conversation_id, parent_id, role, content_text, content_type,
+                    metadata_json, status, is_active_branch, created_at, updated_at
+                ) SELECT id, conversation_id, parent_id, role, content_text, content_type,
+                         metadata_json, status, is_active_branch, created_at, updated_at
+                  FROM _messages_old;
+                """)
+                cur.execute("DROP TABLE _messages_old;")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_parent ON messages(conversation_id, parent_id);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_active ON messages(conversation_id, is_active_branch);")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_conv_created ON messages(conversation_id, created_at ASC);")
+                cur.execute("PRAGMA foreign_keys = ON;")
+                conn.commit()
+
             logger.info(f"Database schema initialized successfully at {self.db_path}")
         finally:
             conn.close()
@@ -173,9 +216,7 @@ class DatabaseManager:
             isolation_level=None,  # Explicit transaction control
         )
         conn.row_factory = sqlite3.Row
-        cur = conn.cursor()
-        for pragma in PRAGMAS:
-            cur.execute(pragma)
+        conn.executescript("\n".join(PRAGMAS))
         return conn
 
     @contextmanager

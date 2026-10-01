@@ -4,7 +4,7 @@ Satisfies R2, R3, A2, and A6 requirements.
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from app.models.conversation import Conversation, Message
@@ -28,7 +28,7 @@ class ConversationRepo:
         if isinstance(created_at, datetime):
             created_at = created_at.isoformat()
         elif not created_at:
-            created_at = datetime.utcnow().isoformat()
+            created_at = datetime.now(timezone.utc).isoformat()
 
         updated_at = c_dict.get("updated_at")
         if isinstance(updated_at, datetime):
@@ -175,7 +175,7 @@ class ConversationRepo:
             if isinstance(created_at, datetime):
                 created_at = created_at.isoformat()
             elif not created_at:
-                created_at = datetime.utcnow().isoformat()
+                created_at = datetime.now(timezone.utc).isoformat()
 
             updated_at = m_dict.get("updated_at")
             if isinstance(updated_at, datetime):
@@ -245,10 +245,13 @@ class ConversationRepo:
             for r in rows:
                 item = dict(r)
                 item.pop("depth", None)
-                raw_meta = item.pop("metadata_json", None) or "{}"
-                try:
-                    meta_dict = json.loads(raw_meta)
-                except Exception:
+                raw_meta = item.pop("metadata_json", None)
+                if raw_meta and raw_meta != "{}":
+                    try:
+                        meta_dict = json.loads(raw_meta)
+                    except Exception:
+                        meta_dict = {}
+                else:
                     meta_dict = {}
                 item["metadata"] = meta_dict
                 results.append(Message(**item))

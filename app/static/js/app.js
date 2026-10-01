@@ -305,6 +305,11 @@ async function selectConversation(convId, forceSync = false) {
 
   try {
     const res = await fetch(`/api/conversations/${convId}/branch${forceSync ? "?sync=true" : ""}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      messagesContainer.innerHTML = `<div style="color: var(--danger-color); padding: 24px;">Erreur (${res.status}): ${escapeHtml(err.detail || "Erreur chargement")}</div>`;
+      return;
+    }
     const branch = await res.json();
     state.activeBranchMessages = branch.messages || [];
 
