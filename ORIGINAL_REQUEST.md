@@ -1,0 +1,1 @@
+.agents/teamwork/ORIGINAL_REQUEST.md

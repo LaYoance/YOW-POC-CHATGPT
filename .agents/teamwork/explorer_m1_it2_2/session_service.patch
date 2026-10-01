@@ -1,0 +1,134 @@
+--- a/app/services/session_service.py
++++ b/app/services/session_service.py
+@@ -63,6 +63,7 @@ class SessionService:
+ 
+         # Reconnect wizard and circuit breaker state
+         self.refresh_attempt_count = 0
++        self._refresh_lock: Optional[asyncio.Lock] = None
+         self.active_wizard_task: Optional[asyncio.Task] = None
+         self.wizard_start_time: float = 0.0
+         self.wizard_status: ReconnectWizardStatus = ReconnectWizardStatus.IDLE
+@@ -284,6 +285,17 @@ class SessionService:
+         if token_key not in cookies:
+             if "next-auth.session-token" in cookies:
+                 token_key = "next-auth.session-token"
++            elif any(k.startswith(f"{token_key}.") for k in cookies):
++                chunk_indices = sorted(
++                    [int(k.split(".")[-1]) for k in cookies if k.startswith(f"{token_key}.") and k.split(".")[-1].isdigit()]
++                )
++                cookies[token_key] = "".join(cookies[f"{token_key}.{i}"] for i in chunk_indices)
++            elif any(k.startswith("next-auth.session-token.") for k in cookies):
++                chunk_indices = sorted(
++                    [int(k.split(".")[-1]) for k in cookies if k.startswith("next-auth.session-token.") and k.split(".")[-1].isdigit()]
++                )
++                cookies["next-auth.session-token"] = "".join(cookies[f"next-auth.session-token.{i}"] for i in chunk_indices)
++                token_key = "next-auth.session-token"
+             else:
+                 return SessionStatusResponse(
+                     status=SessionStatus.MISSING,
+@@ -337,6 +349,9 @@ class SessionService:
+             )
+ 
+         if status_code != 200:
++            existing = await self._call_repo(self.session_repo.get_default)
++            if existing:
++                await self._call_repo(self.session_repo.update_status, SessionStatus.EXPIRED)
+             return SessionStatusResponse(
+                 status=SessionStatus.EXPIRED,
+                 is_valid=False,
+@@ -347,9 +362,15 @@ class SessionService:
+                 reconnect_guidance=f"Authentication server rejected session credentials with code {status_code}."
+             )
+ 
++        if not isinstance(data, dict):
++            data = {}
++
+         access_token = data.get("accessToken")
+         if not access_token:
+             # NextAuth frequently returns HTTP 200 with {} or {"expires": ...} on unauthenticated requests
++            existing = await self._call_repo(self.session_repo.get_default)
++            if existing:
++                await self._call_repo(self.session_repo.update_status, SessionStatus.EXPIRED)
+             return SessionStatusResponse(
+                 status=SessionStatus.EXPIRED,
+                 is_valid=False,
+@@ -381,6 +402,30 @@ class SessionService:
+         user_id = user_info.get("id") or claims.get("sub") or auth_claims.get("user_id")
+         plan_type = auth_claims.get("plan_type", "unknown")
+ 
++        # Reject expired token: do not save as VALID and do not reset circuit breaker
++        if expires_at and expires_at <= now:
++            existing = await self._call_repo(self.session_repo.get_default)
++            if existing:
++                await self._call_repo(self.session_repo.update_status, SessionStatus.EXPIRED)
++            return SessionStatusResponse(
++                status=SessionStatus.EXPIRED,
++                is_valid=False,
++                is_authenticated=False,
++                user_email=user_email,
++                user_name=user_name,
++                user_id=user_id,
++                plan_type=plan_type,
++                expires_at=expires_at,
++                last_verified_at=now,
++                message="Access token has expired.",
++                message_fr="Le jeton d'accès a expiré.",
++                action_required="RECONNECT",
++                reconnect_guidance="The session token retrieved from upstream has already expired. Please re-authenticate.",
++                guidance=[
++                    "Click 'Reconnect' to refresh credentials or enter a fresh cookie."
++                ]
++            )
++
+         # Persist session to SQLite
+         session = Session(
+             id="default",
+@@ -397,7 +442,7 @@ class SessionService:
+         )
+         await self._call_repo(self.session_repo.save, session)
+         self.enforce_storage_security()
+-        self.refresh_attempt_count = 0  # Reset circuit breaker
++        self.refresh_attempt_count = 0  # Reset circuit breaker ONLY on valid token
+ 
+         return SessionStatusResponse(
+             status=SessionStatus.VALID,
+@@ -425,14 +470,31 @@ class SessionService:
+ 
+         now = datetime.now(timezone.utc)
+         if session.expires_at and (session.expires_at - now).total_seconds() < 60:
+-            if self.refresh_attempt_count < 1:
+-                self.refresh_attempt_count += 1
+-                cookies = session.cookies
+-                res = await self.import_session_cookies(json.dumps(cookies))
+-                if res.is_valid:
+-                    fresh_session = await self._call_repo(self.session_repo.get_default)
+-                    return fresh_session.access_token
+-            raise RuntimeError("SESSION_EXPIRED: Access token expired and automatic refresh failed.")
++            if self._refresh_lock is None:
++                self._refresh_lock = asyncio.Lock()
++            async with self._refresh_lock:
++                refreshed = await self._call_repo(self.session_repo.get_default)
++                if (
++                    refreshed
++                    and refreshed.access_token
++                    and refreshed.status == SessionStatus.VALID
++                    and refreshed.expires_at
++                    and (refreshed.expires_at - datetime.now(timezone.utc)).total_seconds() >= 60
++                ):
++                    return refreshed.access_token
++
++                if self.refresh_attempt_count < 1:
++                    self.refresh_attempt_count += 1
++                    cookies = session.cookies
++                    res = await self.import_session_cookies(json.dumps(cookies))
++                    if res.is_valid:
++                        fresh_session = await self._call_repo(self.session_repo.get_default)
++                        if fresh_session and fresh_session.access_token:
++                            return fresh_session.access_token
++
++                # Update SQLite status to EXPIRED before raising to prevent split-brain
++                await self._call_repo(self.session_repo.update_status, SessionStatus.EXPIRED)
++                raise RuntimeError("SESSION_EXPIRED: Access token expired and automatic refresh failed.")
+ 
+         if session.status != SessionStatus.VALID:
+             raise RuntimeError(f"SESSION_{session.status}: Session is not in VALID state.")

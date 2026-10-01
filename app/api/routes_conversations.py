@@ -1,0 +1,71 @@
+"""
+Conversations API Endpoints (R2, A1, A2).
+"""
+
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from app.models.conversation import ActiveBranchResponse, Conversation, PaginatedConversations
+from app.services.conversation_service import ConversationService
+
+router = APIRouter(prefix="/api/conversations", tags=["Conversations"])
+
+_conversation_service = ConversationService()
+
+
+def get_conversation_service() -> ConversationService:
+    return _conversation_service
+
+
+@router.get("", response_model=PaginatedConversations)
+async def list_conversations(
+    project_id: Optional[str] = None,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(28, ge=1, le=100),
+    sync: bool = False,
+    service: ConversationService = Depends(get_conversation_service),
+):
+    """List paginated conversations, optionally scoped by project_id."""
+    return await service.list_conversations(
+        project_id=project_id, offset=offset, limit=limit, sync_upstream=sync
+    )
+
+
+@router.post("/sync", response_model=PaginatedConversations)
+async def sync_conversations(
+    project_id: Optional[str] = None,
+    offset: int = 0,
+    limit: int = 28,
+    service: ConversationService = Depends(get_conversation_service),
+):
+    """Explicitly synchronize conversation list from upstream."""
+    return await service.list_conversations(
+        project_id=project_id, offset=offset, limit=limit, sync_upstream=True
+    )
+
+
+@router.get("/{conversation_id}", response_model=Conversation)
+async def get_conversation(
+    conversation_id: str,
+    service: ConversationService = Depends(get_conversation_service),
+):
+    """Get conversation header and leaf node."""
+    conv = service.conversation_repo.get_conversation(conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail=f"Conversation {conversation_id} not found")
+    return conv
+
+
+@router.get("/{conversation_id}/branch", response_model=ActiveBranchResponse)
+async def get_active_branch(
+    conversation_id: str,
+    sync: bool = False,
+    service: ConversationService = Depends(get_conversation_service),
+):
+    """
+    Get chronologically ordered active branch from root to leaf via recursive CTE (A2).
+    """
+    try:
+        return await service.get_active_branch(conversation_id=conversation_id, force_sync=sync)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

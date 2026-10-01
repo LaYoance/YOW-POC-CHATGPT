@@ -1,0 +1,32 @@
+# Local Session Data & Database Isolation (R1, A7)
+.session_data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Environment Variables & Secrets
+.env
+.env.*
+!.env.example
+
+# Python Bytecode & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Editor & OS artifacts
+.DS_Store
+.vscode/
+.idea/
+
+# Virtual Environment
+venv/
+.venv/

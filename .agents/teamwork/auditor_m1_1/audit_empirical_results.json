@@ -1,0 +1,419 @@
+{
+  "ast_facade_check": {
+    "status": "PASS",
+    "issues": []
+  },
+  "ast_trivial_assert_check": {
+    "status": "PASS",
+    "issues": [],
+    "stats": {
+      "test_feature_resilience.py": {
+        "test_sqlite_wal_pragmas_and_schema_initialization": {
+          "assert_count": 6,
+          "assert_types": [
+            "assertEqual",
+            "assertIn"
+          ],
+          "trivial_asserts": []
+        },
+        "test_cold_boot_recovery_benchmark": {
+          "assert_count": 4,
+          "assert_types": [
+            "assertEqual",
+            "assertLess"
+          ],
+          "trivial_asserts": []
+        },
+        "test_active_branch_isolation_from_branching_dag": {
+          "assert_count": 3,
+          "assert_types": [
+            "assertEqual",
+            "assertNotIn"
+          ],
+          "trivial_asserts": []
+        },
+        "test_active_branch_dynamic_switch": {
+          "assert_count": 3,
+          "assert_types": [
+            "assertEqual",
+            "assertNotIn"
+          ],
+          "trivial_asserts": []
+        },
+        "test_cold_restart_data_integrity": {
+          "assert_count": 3,
+          "assert_types": [
+            "assertEqual"
+          ],
+          "trivial_asserts": []
+        },
+        "test_synthetic_root_and_empty_content_resilience": {
+          "assert_count": 4,
+          "assert_types": [
+            "assertEqual"
+          ],
+          "trivial_asserts": []
+        },
+        "test_transport_audit_log_persistence": {
+          "assert_count": 5,
+          "assert_types": [
+            "assertEqual",
+            "assertTrue"
+          ],
+          "trivial_asserts": []
+        },
+        "test_foreign_key_cascade_and_set_null": {
+          "assert_count": 4,
+          "assert_types": [
+            "assertIsNone",
+            "assertEqual",
+            "assertIsNotNone"
+          ],
+          "trivial_asserts": []
+        }
+      },
+      "test_feature_session.py": {
+        "test_session_initial_missing_state": {
+          "assert_count": 6,
+          "assert_types": [
+            "assertEqual",
+            "assertTrue",
+            "assertIn",
+            "assertFalse"
+          ],
+          "trivial_asserts": []
+        },
+        "test_cookie_parsing_multi_format": {
+          "assert_count": 10,
+          "assert_types": [
+            "assertEqual"
+          ],
+          "trivial_asserts": []
+        },
+        "test_jwt_claims_decoding": {
+          "assert_count": 4,
+          "assert_types": [
+            "assertEqual"
+          ],
+          "trivial_asserts": []
+        },
+        "test_session_import_and_valid_transition": {
+          "assert_count": 10,
+          "assert_types": [
+            "assertEqual",
+            "assertTrue",
+            "assertIsNotNone"
+          ],
+          "trivial_asserts": []
+        },
+        "test_session_expiration_transition": {
+          "assert_count": 6,
+          "assert_types": [
+            "assertEqual",
+            "assertIn",
+            "assertRaises",
+            "assertFalse"
+          ],
+          "trivial_asserts": []
+        },
+        "test_session_challenge_required_transition": {
+          "assert_count": 5,
+          "assert_types": [
+            "assertEqual",
+            "assertIsNotNone",
+            "assertFalse"
+          ],
+          "trivial_asserts": []
+        },
+        "test_empty_body_or_missing_access_token_handled_as_expired": {
+          "assert_count": 4,
+          "assert_types": [
+            "assertEqual",
+            "assertIn",
+            "assertFalse"
+          ],
+          "trivial_asserts": []
+        },
+        "test_storage_permissions_enforcement": {
+          "assert_count": 2,
+          "assert_types": [
+            "assertEqual"
+          ],
+          "trivial_asserts": []
+        },
+        "test_git_exclusion_verification": {
+          "assert_count": 3,
+          "assert_types": [
+            "assertFalse",
+            "assertTrue"
+          ],
+          "trivial_asserts": []
+        },
+        "test_secret_masking_filter": {
+          "assert_count": 8,
+          "assert_types": [
+            "assertIn",
+            "assertNotIn"
+          ],
+          "trivial_asserts": []
+        },
+        "test_session_credentials_repr_masking": {
+          "assert_count": 4,
+          "assert_types": [
+            "assertEqual",
+            "assertIn",
+            "assertNotIn"
+          ],
+          "trivial_asserts": []
+        },
+        "test_circuit_breaker_and_infinite_loop_prevention": {
+          "assert_count": 3,
+          "assert_types": [
+            "assertEqual",
+            "assertIn",
+            "assertRaises"
+          ],
+          "trivial_asserts": []
+        }
+      },
+      "test_m1_adversarial_stress.py": {
+        "test_01_high_data_scale_wal": {
+          "assert_count": 12,
+          "assert_types": [
+            "assertEqual",
+            "assertNotIn"
+          ],
+          "trivial_asserts": []
+        },
+        "test_02_deep_conversation_tree_cte_recursion": {
+          "assert_count": 8,
+          "assert_types": [
+            "assertEqual",
+            "assertIsNone"
+          ],
+          "trivial_asserts": []
+        },
+        "test_03_highly_branched_conversation_active_isolation": {
+          "assert_count": 11,
+          "assert_types": [
+            "assertEqual",
+            "assertNotIn"
+          ],
+          "trivial_asserts": []
+        },
+        "test_04_concurrent_read_write_wal_stress": {
+          "assert_count": 4,
+          "assert_types": [
+            "assertEqual"
+          ],
+          "trivial_asserts": []
+        },
+        "test_05_cold_restart_latency_under_populated_load": {
+          "assert_count": 8,
+          "assert_types": [
+            "assertEqual",
+            "assertLess"
+          ],
+          "trivial_asserts": []
+        },
+        "test_06_recursion_limit_and_cycle_boundary": {
+          "assert_count": 5,
+          "assert_types": [
+            "assertEqual",
+            "assertLess"
+          ],
+          "trivial_asserts": []
+        },
+        "test_07_deferred_foreign_keys_out_of_order_insertion": {
+          "assert_count": 4,
+          "assert_types": [
+            "assertEqual"
+          ],
+          "trivial_asserts": []
+        },
+        "test_08_large_payload_and_metadata_fidelity": {
+          "assert_count": 6,
+          "assert_types": [
+            "assertEqual"
+          ],
+          "trivial_asserts": []
+        }
+      },
+      "test_adversarial_m1_security.py": {
+        "test_adv_cookie_unicode_junk_and_control_chars": {
+          "assert_count": 2,
+          "assert_types": [
+            "assertIn",
+            "assertIsInstance"
+          ],
+          "trivial_asserts": []
+        },
+        "test_adv_cookie_missing_keys_and_broken_structures": {
+          "assert_count": 1,
+          "assert_types": [
+            "assertIsInstance"
+          ],
+          "trivial_asserts": []
+        },
+        "test_adv_cookie_import_without_session_token_returns_missing": {
+          "assert_count": 3,
+          "assert_types": [
+            "assertEqual",
+            "assertFalse"
+          ],
+          "trivial_asserts": []
+        },
+        "test_adv_cookie_giant_payload_stress": {
+          "assert_count": 4,
+          "assert_types": [
+            "assertEqual",
+            "assertLess"
+          ],
+          "trivial_asserts": []
+        },
+        "test_adv_jwt_malformed_and_tampered_structures": {
+          "assert_count": 2,
+          "assert_types": [
+            "assertEqual",
+            "assertIsInstance"
+          ],
+          "trivial_asserts": []
+        },
+        "test_adv_jwt_anomalous_claims": {
+          "assert_count": 2,
+          "assert_types": [
+            "assertEqual"
+          ],
+          "trivial_asserts": []
+        },
+        "test_adv_jwt_expired_token_import_flaw_proof": {
+          "assert_count": 3,
+          "assert_types": [
+            "assertEqual",
+            "assertTrue"
+          ],
+          "trivial_asserts": []
+        },
+        "test_adv_rapid_401_hammering_sequential": {
+          "assert_count": 3,
+          "assert_types": [
+            "assertEqual",
+            "assertIn"
+          ],
+          "trivial_asserts": []
+        },
+        "test_adv_concurrent_401_hammering": {
+          "assert_count": 3,
+          "assert_types": [
+            "assertEqual",
+            "assertTrue"
+          ],
+          "trivial_asserts": []
+        },
+        "test_adv_circuit_breaker_bypass_on_200_expired_loop_proof": {
+          "assert_count": 4,
+          "assert_types": [
+            "assertEqual"
+          ],
+          "trivial_asserts": []
+        },
+        "test_adv_log_sanitization_raw_jwt_and_cookies": {
+          "assert_count": 6,
+          "assert_types": [
+            "assertIn",
+            "assertNotIn"
+          ],
+          "trivial_asserts": []
+        },
+        "test_adv_log_sanitization_leak_vectors_proof": {
+          "assert_count": 3,
+          "assert_types": [
+            "assertIn"
+          ],
+          "trivial_asserts": []
+        },
+        "test_adv_storage_tampering_and_restoration": {
+          "assert_count": 9,
+          "assert_types": [
+            "assertEqual",
+            "assertTrue"
+          ],
+          "trivial_asserts": []
+        },
+        "test_adv_storage_restoration_via_db_manager": {
+          "assert_count": 2,
+          "assert_types": [
+            "assertEqual"
+          ],
+          "trivial_asserts": []
+        }
+      }
+    }
+  },
+  "sqlite_engine_check": {
+    "status": "PASS",
+    "is_sqlite_header": true,
+    "journal_mode": "wal",
+    "foreign_keys": 0,
+    "synchronous": 2,
+    "tables_found": [
+      "sessions",
+      "projects",
+      "conversations",
+      "messages",
+      "sync_watermarks",
+      "transport_logs",
+      "sqlite_sequence"
+    ]
+  },
+  "recursive_cte_explain_check": {
+    "status": "PASS",
+    "active_ids_returned": [
+      "root-0",
+      "mid-1",
+      "mid-2",
+      "leaf-3"
+    ],
+    "branch_accurate": true,
+    "cte_in_query_plan": true,
+    "raw_query_plan": "2 | 0 | 0 | CO-ROUTINE branch\n5 | 2 | 0 | SETUP\n8 | 5 | 0 | SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)\n11 | 5 | 0 | SCALAR SUBQUERY 1\n16 | 11 | 0 | SEARCH conversations USING INDEX sqlite_autoindex_conversations_1 (id=?)\n58 | 2 | 0 | RECURSIVE STEP\n61 | 58 | 0 | SCAN b\n64 | 58 | 0 | SEARCH m USING INDEX sqlite_autoindex_messages_1 (id=?)\n89 | 0 | 0 | SCAN branch\n97 | 0 | 0 | USE TEMP B-TREE FOR ORDER BY"
+  },
+  "session_state_machine_check": {
+    "status": "PASS",
+    "cold_missing_detected": true,
+    "expiration_detected": true
+  },
+  "permission_enforcement_check": {
+    "status": "PASS",
+    "tampered_dir_mode": "0o777",
+    "tampered_db_mode": "0o666",
+    "restored_dir_mode": "0o700",
+    "restored_db_mode": "0o600"
+  },
+  "dependency_check": {
+    "status": "PASS",
+    "imported_packages": {
+      "os": 3,
+      "re": 3,
+      "stat": 3,
+      "pathlib": 3,
+      "typing": 13,
+      "pydantic_settings": 2,
+      "pydantic": 3,
+      "app": 29,
+      "json": 6,
+      "datetime": 10,
+      "logging": 3,
+      "sqlite3": 1,
+      "contextlib": 1,
+      "asyncio": 1,
+      "inspect": 1,
+      "time": 1,
+      "uuid": 2,
+      "jwt": 1,
+      "requests": 1,
+      "playwright": 1,
+      "enum": 2
+    }
+  }
+}

@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ChatGPT Integration POC</title>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+
+  <!-- Left Sidebar -->
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <h1>
+        <span>ChatGPT POC</span>
+      </h1>
+      <span id="session-badge" class="badge badge-warning" title="Cliquez pour gérer la session">Session...</span>
+    </div>
+
+    <!-- Projects Section -->
+    <div class="sidebar-section">
+      <div class="section-title">
+        <span>Projets</span>
+        <button id="btn-sync-projects" class="btn-icon" title="Synchroniser les projets">↻</button>
+      </div>
+      <div id="projects-list" style="max-height: 140px; overflow-y: auto;">
+        <div class="item-meta" style="padding: 4px 8px;">Chargement...</div>
+      </div>
+    </div>
+
+    <!-- Conversations Section -->
+    <div class="sidebar-section" style="flex: 1; display: flex; flex-direction: column; overflow: hidden;">
+      <div class="section-title">
+        <span>Conversations</span>
+        <div>
+          <button id="btn-new-chat" class="btn-icon" title="Nouvelle conversation">+</button>
+          <button id="btn-sync-convs" class="btn-icon" title="Synchroniser depuis chatgpt.com">↻</button>
+        </div>
+      </div>
+      <div id="conversations-list" class="list-container">
+        <div class="item-meta" style="padding: 8px;">Chargement des conversations...</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main Content Area -->
+  <main class="main-content">
+    <!-- Top Bar -->
+    <header class="top-bar">
+      <div class="active-info">
+        <span id="active-title" class="active-title">Nouvelle conversation</span>
+        <span id="active-project-tag" class="badge badge-valid hidden">Projet</span>
+      </div>
+
+      <div class="transport-controls">
+        <label for="transport-select" style="font-size: 12px; color: var(--text-muted);">Transport :</label>
+        <select id="transport-select" class="select-control">
+          <option value="AUTO">AUTO (DIRECT_HTTP -> BROWSER -> UI)</option>
+          <option value="DIRECT_HTTP">Mode 1: DIRECT_HTTP</option>
+          <option value="BROWSER_FETCH">Mode 2: BROWSER_FETCH</option>
+          <option value="UI_DRIVEN">Mode 3: UI_DRIVEN (Repli)</option>
+        </select>
+        <button id="btn-session-modal" class="btn btn-secondary">Session</button>
+      </div>
+    </header>
+
+    <!-- Message History (Active Branch) -->
+    <section id="messages-container" class="messages-container">
+      <div style="text-align: center; color: var(--text-muted); margin-top: 100px;">
+        Sélectionnez une conversation ou envoyez un message pour commencer.
+      </div>
+    </section>
+
+    <!-- Input Bar -->
+    <footer class="input-container">
+      <div class="input-box">
+        <textarea
+          id="chat-input"
+          class="chat-input"
+          placeholder="Envoyer un message (Shift+Entrée pour retour ligne)..."
+          rows="1"
+        ></textarea>
+        <button id="btn-send" class="btn">Envoyer</button>
+      </div>
+    </footer>
+  </main>
+
+  <!-- Session Modal -->
+  <div id="session-modal" class="modal-overlay hidden">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title">Gestion de Session ChatGPT</h2>
+        <button id="btn-close-modal" class="btn-icon">✕</button>
+      </div>
+
+      <div>
+        <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 12px;">
+          État actuel : <strong id="modal-session-status">Inconnu</strong>
+        </p>
+        <p id="modal-session-email" style="font-size: 12px; color: var(--text-muted); margin-bottom: 16px;"></p>
+
+        <label style="font-size: 12px; font-weight: 600; display: block; margin-bottom: 6px;">
+          Importer cookies ou session JSON :
+        </label>
+        <textarea
+          id="cookies-input"
+          style="width: 100%; height: 90px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 8px; font-size: 12px; resize: none;"
+          placeholder="__Secure-next-auth.session-token=...; cf_clearance=..."
+        ></textarea>
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 8px;">
+        <button id="btn-reconnect-wizard" class="btn btn-secondary">Lancer Reconnexion Navigateur</button>
+        <button id="btn-import-cookies" class="btn">Importer</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
