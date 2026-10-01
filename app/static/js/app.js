@@ -446,11 +446,81 @@ function scrollToBottom() {
   messagesContainer.scrollTop = messagesContainer.scrollHeight;
 }
 
+// Configure marked with syntax highlighting and copy buttons
+if (window.marked) {
+  try {
+    marked.use({
+      breaks: true,
+      gfm: true,
+      renderer: {
+        code(token) {
+          const rawText = typeof token === "object" ? (token.text || "") : String(token || "");
+          const rawLang = (typeof token === "object" ? token.lang : arguments[1]) || "";
+          const lang = (rawLang || "").trim().toLowerCase();
+
+          let highlighted = "";
+          if (window.hljs && lang && window.hljs.getLanguage(lang)) {
+            try {
+              highlighted = window.hljs.highlight(rawText, { language: lang, ignoreIllegals: true }).value;
+            } catch (e) {
+              highlighted = escapeHtml(rawText);
+            }
+          } else if (window.hljs) {
+            try {
+              highlighted = window.hljs.highlightAuto(rawText).value;
+            } catch (e) {
+              highlighted = escapeHtml(rawText);
+            }
+          } else {
+            highlighted = escapeHtml(rawText);
+          }
+
+          const displayLang = lang || "code";
+          return `
+<div class="code-block-wrapper">
+  <div class="code-block-header">
+    <span class="code-lang-label">${escapeHtml(displayLang)}</span>
+    <button class="btn-copy-code" type="button" onclick="copyCode(this)">
+      <span>📋</span> Copier
+    </button>
+  </div>
+  <pre><code class="hljs ${escapeHtml(lang)}">${highlighted}</code></pre>
+</div>
+`;
+        }
+      }
+    });
+  } catch (e) {
+    console.error("Failed to configure marked extensions:", e);
+  }
+}
+
+function copyCode(btn) {
+  const wrapper = btn.closest(".code-block-wrapper");
+  if (!wrapper) return;
+  const codeEl = wrapper.querySelector("code");
+  if (!codeEl) return;
+  const text = codeEl.innerText;
+  navigator.clipboard.writeText(text).then(() => {
+    const origHtml = btn.innerHTML;
+    btn.innerHTML = '<span>✓</span> Copié !';
+    btn.classList.add("copied");
+    setTimeout(() => {
+      btn.innerHTML = origHtml;
+      btn.classList.remove("copied");
+    }, 2000);
+  }).catch(err => {
+    console.error("Copy failed:", err);
+  });
+}
+window.copyCode = copyCode;
+
 function renderMarkdown(text) {
   if (!text) return "";
   try {
     if (window.marked && typeof window.marked.parse === "function") {
-      const html = window.marked.parse(text, { breaks: true, gfm: true });
+      const cleanText = text.replace(/\r\n/g, "\n");
+      const html = window.marked.parse(cleanText);
       return html.replace(/<a\s+(?:[^>]*?\s+)?href="([^"]*)"([^>]*)>/gi, (match, href, rest) => {
         if (!rest.includes("target=")) {
           return `<a href="${href}" target="_blank" rel="noopener noreferrer"${rest}>`;

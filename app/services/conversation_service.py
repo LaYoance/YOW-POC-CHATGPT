@@ -164,6 +164,32 @@ class ConversationService:
                     text_parts.append(p["text"])
             content_text = "".join(text_parts)
 
+            # Handle non-parts payload types (code blocks, tool executions, errors, thoughts)
+            if not content_text:
+                if content_type == "code":
+                    lang = content.get("language") or ""
+                    if lang == "unknown":
+                        lang = ""
+                    raw_code = content.get("text", "")
+                    content_text = f"```{lang}\n{raw_code}\n```"
+                elif content_type == "execution_output":
+                    raw_out = content.get("text", "")
+                    content_text = f"```output\n{raw_out}\n```"
+                elif content_type == "system_error":
+                    raw_err = content.get("text", "")
+                    content_text = f"```error\n{raw_err}\n```"
+                elif content_type == "reasoning_recap":
+                    recap = content.get("content", "")
+                    if recap:
+                        content_text = f"> 💭 *{recap}*"
+                elif content_type == "thoughts":
+                    thoughts_list = content.get("thoughts", [])
+                    summaries = [t.get("summary", "") for t in thoughts_list if isinstance(t, dict) and t.get("summary")]
+                    if summaries:
+                        content_text = f"> 💭 *{'; '.join(summaries)}*"
+                elif content.get("text"):
+                    content_text = content.get("text", "")
+
             # Ignore empty system instructions or hidden internal nodes
             if role == "system" and not content_text:
                 continue
