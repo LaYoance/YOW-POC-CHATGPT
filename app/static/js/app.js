@@ -70,12 +70,19 @@ function setupEventListeners() {
 
   btnReconnectWizard.addEventListener("click", async () => {
     try {
+      btnReconnectWizard.disabled = true;
+      btnReconnectWizard.textContent = "Lancement...";
+      modalSessionStatus.textContent = "Ouverture du navigateur Chromium... Veuillez patienter.";
+
       const res = await fetch("/api/session/reconnect", { method: "POST" });
       const data = await res.json();
-      alert("Assistant lancé : " + data.message + "\nConnectez-vous dans la fenêtre Chromium.");
+      modalSessionStatus.textContent = data.message || "Chromium ouvert. Connectez-vous sur chatgpt.com.";
       pollReconnectWizard();
     } catch (e) {
-      alert("Erreur lancement assistant: " + e.message);
+      modalSessionStatus.textContent = "Erreur de lancement : " + e.message;
+    } finally {
+      btnReconnectWizard.disabled = false;
+      btnReconnectWizard.textContent = "Lancer Reconnexion Navigateur";
     }
   });
 
@@ -153,19 +160,23 @@ async function pollReconnectWizard() {
     try {
       const res = await fetch("/api/session/reconnect/status");
       const data = await res.json();
-      if (data.status === "COMPLETED") {
+      const status = data.wizard_status || data.status;
+
+      if (status === "RUNNING") {
+        modalSessionStatus.textContent = `${data.message} (${data.elapsed_seconds}s / ${data.timeout_seconds}s)`;
+      } else if (status === "SUCCESS" || status === "COMPLETED") {
         clearInterval(timer);
-        alert("Reconnexion réussie !");
-        sessionModal.classList.add("hidden");
+        modalSessionStatus.textContent = "Reconnexion réussie ! Session synchronisée.";
         await loadSessionStatus();
-      } else if (data.status === "FAILED" || data.status === "TIMEOUT") {
+        setTimeout(() => sessionModal.classList.add("hidden"), 1500);
+      } else if (status === "FAILED" || status === "TIMEOUT" || status === "CANCELLED") {
         clearInterval(timer);
-        alert("Échec de la reconnexion : " + data.message);
+        modalSessionStatus.textContent = "Fin assistant : " + data.message;
       }
     } catch (e) {
       clearInterval(timer);
     }
-  }, 2000);
+  }, 1500);
 }
 
 async function loadTransportStatus() {

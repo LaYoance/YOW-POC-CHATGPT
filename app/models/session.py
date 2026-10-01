@@ -196,7 +196,19 @@ class ReconnectWizardStatus(str, Enum):
 class ReconnectFlowStatus(BaseModel):
     """Status report for the reconnection process."""
     wizard_status: ReconnectWizardStatus = ReconnectWizardStatus.IDLE
+    status: str = "IDLE"
     elapsed_seconds: int = 0
     timeout_seconds: int = 300
     message: str = ""
     session_status: SessionStatus = SessionStatus.MISSING
+
+    def __init__(self, **kwargs: Any):
+        super().__init__(**kwargs)
+        if "wizard_status" in kwargs and "status" not in kwargs:
+            ws = kwargs["wizard_status"]
+            self.status = ws.value if hasattr(ws, "value") else str(ws)
+        elif "status" in kwargs and "wizard_status" not in kwargs:
+            try:
+                self.wizard_status = ReconnectWizardStatus(kwargs["status"])
+            except Exception:
+                pass

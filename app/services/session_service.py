@@ -517,25 +517,31 @@ class SessionService:
 
         return session.access_token
 
-    async def start_reconnect_flow(self) -> ReconnectFlowStatus:
+    async def start_reconnect_flow(self, force_restart: bool = True) -> ReconnectFlowStatus:
         """Launches interactive browser login wizard bounded by 300s timeout."""
         if self.active_wizard_task and not self.active_wizard_task.done():
-            elapsed = int(time.time() - self.wizard_start_time)
-            return ReconnectFlowStatus(
-                wizard_status=ReconnectWizardStatus.RUNNING,
-                elapsed_seconds=elapsed,
-                timeout_seconds=settings.RECONNECT_TIMEOUT_SECONDS,
-                message="Browser login wizard is already running.",
-                session_status=SessionStatus.MISSING,
-            )
+            if force_restart:
+                logger.info("Cancelling existing login wizard to launch a fresh one.")
+                await self.cancel_reconnect_flow()
+            else:
+                elapsed = int(time.time() - self.wizard_start_time)
+                return ReconnectFlowStatus(
+                    wizard_status=ReconnectWizardStatus.RUNNING,
+                    status="RUNNING",
+                    elapsed_seconds=elapsed,
+                    timeout_seconds=settings.RECONNECT_TIMEOUT_SECONDS,
+                    message="Browser login wizard is already running.",
+                    session_status=SessionStatus.MISSING,
+                )
 
         self.wizard_start_time = time.time()
         self.wizard_status = ReconnectWizardStatus.RUNNING
-        self.wizard_message = "Browser login wizard launched. Waiting for user login..."
+        self.wizard_message = "Ouverture du navigateur Chromium... Veuillez vous connecter."
         self.active_wizard_task = asyncio.create_task(self._run_browser_login_wizard())
 
         return ReconnectFlowStatus(
             wizard_status=ReconnectWizardStatus.RUNNING,
+            status="RUNNING",
             elapsed_seconds=0,
             timeout_seconds=settings.RECONNECT_TIMEOUT_SECONDS,
             message=self.wizard_message,
@@ -554,48 +560,89 @@ class SessionService:
 
         playwright = None
         context = None
+        self._current_wizard_context = None
         try:
             from playwright.async_api import async_playwright
             playwright = await async_playwright().start()
-            exec_path = "/usr/bin/chromium-browser" if Path("/usr/bin/chromium-browser").exists() else None
+            self._current_wizard_playwright = playwright
+
+            # In interactive login wizard, headed mode is required so user sees ChatGPT login page
+            has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+            use_headless = not has_display
+
+            logger.info(
+                f"Launching login wizard Chromium (headless={use_headless}, display={os.environ.get('DISPLAY')})..."
+            )
+
+            # Use Playwright's verified bundled Chromium (no snap wrapper)
             context = await playwright.chromium.launch_persistent_context(
                 user_data_dir=str(chromium_profile),
-                headless=settings.BROWSER_HEADLESS,
-                executable_path=exec_path,
-                args=["--disable-blink-features=AutomationControlled"]
+                headless=use_headless,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-blink-features=AutomationControlled",
+                    "--window-size=1280,900",
+                ],
             )
-            page = await context.new_page()
-            await page.goto(f"{self.base_url}/", timeout=45000)
+            self._current_wizard_context = context
+            page = context.pages[0] if context.pages else await context.new_page()
+
+            logger.info(f"Navigating to {self.base_url}...")
+            await page.goto(f"{self.base_url}/", timeout=60000)
 
             start_t = time.time()
             timeout_limit = settings.RECONNECT_TIMEOUT_SECONDS
             while time.time() - start_t < timeout_limit:
-                await asyncio.sleep(2.5)
+                await asyncio.sleep(2.0)
+
+                # Check if window was closed by user
+                if not context.pages or page.is_closed():
+                    cookies_list = await context.cookies()
+                    token_cookie = next(
+                        (c for c in cookies_list if c["name"] in ("__Secure-next-auth.session-token", "next-auth.session-token")),
+                        None
+                    )
+                    if token_cookie:
+                        cookies_dict = {c["name"]: c["value"] for c in cookies_list}
+                        await self.import_session_cookies(cookies_dict)
+                        self.wizard_status = ReconnectWizardStatus.SUCCESS
+                        self.wizard_message = "Authentification réussie !"
+                        return
+                    else:
+                        self.wizard_status = ReconnectWizardStatus.CANCELLED
+                        self.wizard_message = "Fenêtre du navigateur fermée par l'utilisateur."
+                        return
+
                 cookies_list = await context.cookies()
                 token_cookie = next(
                     (c for c in cookies_list if c["name"] in ("__Secure-next-auth.session-token", "next-auth.session-token")),
                     None
                 )
                 if token_cookie:
-                    session_json = await page.evaluate(
-                        '() => fetch("/api/auth/session").then(r => r.json()).catch(() => ({}))'
-                    )
-                    if isinstance(session_json, dict) and session_json.get("accessToken"):
-                        cookies_dict = {c["name"]: c["value"] for c in cookies_list}
-                        await self.import_session_cookies(cookies_dict)
-                        self.wizard_status = ReconnectWizardStatus.SUCCESS
-                        self.wizard_message = "Successfully authenticated via browser wizard!"
-                        return
+                    try:
+                        session_json = await page.evaluate(
+                            '() => fetch("/api/auth/session").then(r => r.json()).catch(() => ({}))'
+                        )
+                        if isinstance(session_json, dict) and session_json.get("accessToken"):
+                            cookies_dict = {c["name"]: c["value"] for c in cookies_list}
+                            await self.import_session_cookies(cookies_dict)
+                            self.wizard_status = ReconnectWizardStatus.SUCCESS
+                            self.wizard_message = "Authentification réussie ! Session enregistrée."
+                            await asyncio.sleep(2.0)
+                            return
+                    except Exception:
+                        pass
 
             self.wizard_status = ReconnectWizardStatus.TIMEOUT
-            self.wizard_message = f"Login wizard timed out after {timeout_limit} seconds."
+            self.wizard_message = f"Délai d'attente dépassé ({timeout_limit}s)."
         except asyncio.CancelledError:
             self.wizard_status = ReconnectWizardStatus.CANCELLED
-            self.wizard_message = "Login wizard was cancelled."
+            self.wizard_message = "Assistant de reconnexion annulé."
         except Exception as e:
-            logger.error(f"Error in browser login wizard: {e}")
+            logger.error(f"Error in browser login wizard: {e}", exc_info=True)
             self.wizard_status = ReconnectWizardStatus.FAILED
-            self.wizard_message = f"Wizard encountered an error: {e}"
+            self.wizard_message = f"Erreur de l'assistant : {e}"
         finally:
             if context:
                 try:
@@ -607,10 +654,17 @@ class SessionService:
                     await playwright.stop()
                 except Exception:
                     pass
+            self._current_wizard_context = None
+            self._current_wizard_playwright = None
             self.enforce_storage_security()
 
     async def cancel_reconnect_flow(self) -> ReconnectFlowStatus:
         """Cancels running browser wizard cleanly without lingering processes."""
+        if hasattr(self, "_current_wizard_context") and self._current_wizard_context:
+            try:
+                await self._current_wizard_context.close()
+            except Exception:
+                pass
         if self.active_wizard_task and not self.active_wizard_task.done():
             self.active_wizard_task.cancel()
             try:
@@ -622,7 +676,10 @@ class SessionService:
         current_status = await self.get_current_session_status()
         return ReconnectFlowStatus(
             wizard_status=self.wizard_status,
+            status=self.wizard_status.value,
             elapsed_seconds=0,
+            timeout_seconds=settings.RECONNECT_TIMEOUT_SECONDS,
+            message=self.wizard_message,
             session_status=current_status.status,
         )
 
@@ -631,6 +688,7 @@ class SessionService:
         elapsed = int(time.time() - self.wizard_start_time) if self.wizard_start_time else 0
         return ReconnectFlowStatus(
             wizard_status=self.wizard_status,
+            status=self.wizard_status.value if hasattr(self.wizard_status, "value") else str(self.wizard_status),
             elapsed_seconds=elapsed,
             timeout_seconds=settings.RECONNECT_TIMEOUT_SECONDS,
             message=self.wizard_message,
