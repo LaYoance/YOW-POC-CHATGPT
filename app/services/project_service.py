@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from app.models.project import Project, ProjectContextSchema, ProjectSchema
 from app.persistence.project_repo import ProjectRepo
-from app.transports.router import TransportRouter
+from app.transports.router import TransportRouter, get_shared_router
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,7 @@ class ProjectService:
         transport_router: Optional[TransportRouter] = None,
     ):
         self.project_repo = project_repo or ProjectRepo()
-        self.transport_router = transport_router or TransportRouter()
+        self.transport_router = transport_router or get_shared_router()
 
     async def list_cached_projects(self) -> List[Project]:
         """Return projects stored in local SQLite cache."""

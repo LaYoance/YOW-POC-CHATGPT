@@ -27,6 +27,22 @@ from app.transports.ui_driven import UiDrivenTransport
 
 logger = logging.getLogger(__name__)
 
+_shared_router_instance: Optional["TransportRouter"] = None
+
+
+def get_shared_router() -> "TransportRouter":
+    """Return the global shared TransportRouter instance."""
+    global _shared_router_instance
+    if _shared_router_instance is None:
+        _shared_router_instance = TransportRouter()
+    return _shared_router_instance
+
+
+def set_shared_router(router: Optional["TransportRouter"]) -> None:
+    """Set the global shared TransportRouter instance (useful for test fixtures)."""
+    global _shared_router_instance
+    _shared_router_instance = router
+
 
 class TransportRouter:
     """
@@ -61,6 +77,8 @@ class TransportRouter:
 
         self.last_successful_mode: Optional[TransportMode] = None
         self.consecutive_failures: Dict[str, int] = {m.value: 0 for m in TransportMode}
+        self._submission_locks: Dict[str, asyncio.Lock] = {}
+        self._locks_guard = asyncio.Lock()
 
     def set_forced_mode(self, mode: Optional[TransportMode]) -> None:
         """Lock router to a specific transport or None for auto-failover."""
@@ -215,102 +233,167 @@ class TransportRouter:
             lambda t: t.fetch_conversation_tree(conversation_id=conversation_id),
         )
 
+    async def _get_submission_lock(self, key: str) -> asyncio.Lock:
+        async with self._locks_guard:
+            if key not in self._submission_locks:
+                self._submission_locks[key] = asyncio.Lock()
+            return self._submission_locks[key]
+
     async def send_message_stream(
         self,
         request: SendMessageRequest,
     ) -> AsyncIterator[Dict[str, Any]]:
         """
-        Executes streaming message transmission.
-        Tries chosen or fallback transports until a stream successfully connects.
+        Executes streaming message transmission with anti-duplicate guarantees (R3, A8).
+        Disallows re-submission if a message was potentially accepted upstream.
+        Reconciles upstream persistence or returns an uncertain delivery state.
         """
-        if self.forced_mode:
-            modes_to_try = [self.forced_mode]
-        elif self.last_successful_mode:
-            modes_to_try = [self.last_successful_mode] + [m for m in self.fallback_chain if m != self.last_successful_mode]
-        else:
-            # UI_DRIVEN is prioritized for outbound message streaming to bypass Cloudflare
-            # bot-detection on programmatic POST endpoints (/backend-api/conversation)
-            modes_to_try = [TransportMode.UI_DRIVEN, TransportMode.BROWSER_FETCH, TransportMode.DIRECT_HTTP]
-
         target_id = request.conversation_id or "new_chat"
-        last_exception: Optional[Exception] = None
+        lock = await self._get_submission_lock(target_id)
 
-        for idx, mode in enumerate(modes_to_try):
-            transport = self.transports[mode]
-            start_time = time.perf_counter()
-            fallback_triggered = idx > 0
+        async with lock:
+            if self.forced_mode:
+                modes_to_try = [self.forced_mode]
+            elif self.last_successful_mode:
+                modes_to_try = [self.last_successful_mode] + [m for m in self.fallback_chain if m != self.last_successful_mode]
+            else:
+                modes_to_try = [TransportMode.UI_DRIVEN, TransportMode.BROWSER_FETCH, TransportMode.DIRECT_HTTP]
 
-            try:
-                # Test connection by attempting first chunk
-                stream_iter = transport.send_message_stream(request)
-                first_chunk = None
+            last_exception: Optional[Exception] = None
+            submission_potentially_accepted = False
+
+            for idx, mode in enumerate(modes_to_try):
+                transport = self.transports[mode]
+                start_time = time.perf_counter()
+                fallback_triggered = idx > 0
 
                 try:
-                    first_chunk = await stream_iter.__anext__()
-                except StopAsyncIteration:
-                    pass
+                    stream_iter = transport.send_message_stream(request)
+                    first_chunk = None
 
-                self.last_successful_mode = mode
-                self.consecutive_failures[mode.value] = 0
+                    try:
+                        first_chunk = await stream_iter.__anext__()
+                    except StopAsyncIteration:
+                        pass
 
-                self.log_repo.log_operation(
-                    TransportAuditRecord(
-                        operation="send_message_stream",
-                        attempted_mode=modes_to_try[0],
-                        resolved_mode=mode,
-                        target_id=target_id,
-                        status_code=200,
-                        latency_ms=(time.perf_counter() - start_time) * 1000,
-                        success=True,
-                        fallback_triggered=fallback_triggered,
+                    # If first_chunk was received or transport yielded chunks, submission was accepted upstream
+                    if first_chunk:
+                        submission_potentially_accepted = True
+
+                    self.last_successful_mode = mode
+                    self.consecutive_failures[mode.value] = 0
+
+                    self.log_repo.log_operation(
+                        TransportAuditRecord(
+                            operation="send_message_stream",
+                            attempted_mode=modes_to_try[0],
+                            resolved_mode=mode,
+                            target_id=target_id,
+                            status_code=200,
+                            latency_ms=(time.perf_counter() - start_time) * 1000,
+                            success=True,
+                            fallback_triggered=fallback_triggered,
+                        )
                     )
-                )
 
-                if first_chunk:
-                    yield first_chunk
+                    if first_chunk:
+                        yield first_chunk
 
-                async for chunk in stream_iter:
-                    yield chunk
+                    try:
+                        async for chunk in stream_iter:
+                            if not submission_potentially_accepted:
+                                submission_potentially_accepted = True
+                            yield chunk
+                    except Exception as stream_err:
+                        logger.warning(f"Stream interrupted on {mode.value} after initial connection: {stream_err}")
+                        submission_potentially_accepted = True
+                        raise stream_err
 
-                return
+                    return
 
-            except SessionExpiredError as e:
-                self.log_repo.log_operation(
-                    TransportAuditRecord(
-                        operation="send_message_stream",
-                        attempted_mode=mode,
-                        resolved_mode=mode,
-                        target_id=target_id,
-                        status_code=401,
-                        latency_ms=(time.perf_counter() - start_time) * 1000,
-                        success=False,
-                        error_message=str(e),
-                        fallback_triggered=fallback_triggered,
+                except SessionExpiredError as e:
+                    self.log_repo.log_operation(
+                        TransportAuditRecord(
+                            operation="send_message_stream",
+                            attempted_mode=mode,
+                            resolved_mode=mode,
+                            target_id=target_id,
+                            status_code=401,
+                            latency_ms=(time.perf_counter() - start_time) * 1000,
+                            success=False,
+                            error_message=str(e),
+                            fallback_triggered=fallback_triggered,
+                        )
                     )
-                )
-                raise
+                    raise
 
-            except Exception as e:
-                logger.warning(f"Streaming failed on mode {mode.value}: {e}")
-                last_exception = e
-                self.consecutive_failures[mode.value] += 1
-                self.log_repo.log_operation(
-                    TransportAuditRecord(
-                        operation="send_message_stream",
-                        attempted_mode=mode,
-                        resolved_mode=mode,
-                        target_id=target_id,
-                        status_code=getattr(e, "status_code", None),
-                        latency_ms=(time.perf_counter() - start_time) * 1000,
-                        success=False,
-                        error_message=str(e),
-                        fallback_triggered=fallback_triggered,
+                except Exception as e:
+                    logger.warning(f"Streaming failed on mode {mode.value}: {e}")
+                    last_exception = e
+                    self.consecutive_failures[mode.value] += 1
+                    self.log_repo.log_operation(
+                        TransportAuditRecord(
+                            operation="send_message_stream",
+                            attempted_mode=mode,
+                            resolved_mode=mode,
+                            target_id=target_id,
+                            status_code=getattr(e, "status_code", None),
+                            latency_ms=(time.perf_counter() - start_time) * 1000,
+                            success=False,
+                            error_message=str(e),
+                            fallback_triggered=fallback_triggered,
+                        )
                     )
-                )
 
-        if last_exception:
-            raise last_exception
-        raise TransportError("All transports failed to stream message")
+                    # CRITICAL: If the message was potentially accepted upstream, FORBID any fallback resubmission
+                    if submission_potentially_accepted:
+                        logger.warning(
+                            f"Submission was potentially accepted on {mode.value} before failure. "
+                            f"Disallowing failover to prevent duplicate message. Attempting upstream reconciliation..."
+                        )
+                        # Reconcile upstream persistence
+                        conv_id = request.conversation_id
+                        reconciled = False
+                        if conv_id:
+                            try:
+                                tree = await self.fetch_conversation_tree(conv_id)
+                                if tree and isinstance(tree, dict) and tree.get("current_node"):
+                                    curr = tree["current_node"]
+                                    node = tree.get("mapping", {}).get(curr, {})
+                                    msg = node.get("message")
+                                    if msg:
+                                        role = msg.get("author", {}).get("role")
+                                        parts = msg.get("content", {}).get("parts", [])
+                                        text = "".join(parts) if parts else ""
+                                        if role == "assistant" and text:
+                                            yield {
+                                                "event": "done",
+                                                "text": text,
+                                                "message_id": curr,
+                                                "parent_id": node.get("parent"),
+                                                "conversation_id": conv_id,
+                                                "reconciled": True,
+                                            }
+                                            reconciled = True
+                                            return
+                            except Exception as rec_err:
+                                logger.warning(f"Upstream reconciliation attempt failed: {rec_err}")
+
+                        # If not reconciled, return uncertain delivery state
+                        yield {
+                            "event": "uncertain",
+                            "status": "uncertain",
+                            "text": "",
+                            "error": f"Message may have been accepted upstream via {mode.value} but streaming was interrupted ({e}). Upstream state unconfirmed; resubmission aborted to prevent duplication.",
+                            "conversation_id": conv_id,
+                            "parent_id": request.parent_message_id,
+                            "attempted_mode": mode.value,
+                        }
+                        return
+
+            if last_exception:
+                raise last_exception
+            raise TransportError("All transports failed to stream message")
 
     async def get_interpreter_download_url(
         self,

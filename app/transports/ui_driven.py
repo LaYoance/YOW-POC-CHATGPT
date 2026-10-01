@@ -309,15 +309,16 @@ class UiDrivenTransport(ChatGPTTransport):
             accumulated_text = ""
             assistant_msg_id = str(uuid.uuid4())
             conv_id = request.conversation_id
+            generation_completed = False
 
             # Wait for assistant response generation to start and complete (up to 60s)
             for _ in range(120):
                 await asyncio.sleep(0.5)
 
-                # Extract conversation ID from URL if was new chat
-                if not conv_id and "/c/" in page.url:
+                # Extract or update conversation ID from URL if was new chat or redirected
+                if "/c/" in page.url:
                     raw_id = page.url.split("/c/")[1].split("?")[0].split("#")[0]
-                    if not raw_id.startswith("local-chatgpt"):
+                    if raw_id and not raw_id.startswith("local-chatgpt") and len(raw_id) > 10:
                         conv_id = raw_id
 
                 turn_text = await page.evaluate(f"""
@@ -347,36 +348,76 @@ class UiDrivenTransport(ChatGPTTransport):
                 )
                 if accumulated_text and not stop_btn:
                     await asyncio.sleep(0.5)
+                    generation_completed = True
                     break
 
-            # If conversation ID is known, resolve canonical IDs from upstream tree
-            if conv_id:
-                try:
-                    session = self.session_repo.get_default()
-                    token = session.credentials.access_token if session and session.credentials else ""
-                    tree = await page.evaluate("""
-                        async ({url, token}) => {
-                            const headers = token ? {'Authorization': 'Bearer ' + token} : {};
+            # 1. Condition: generation must be completed (no timeout)
+            if not generation_completed:
+                raise TransportError(
+                    "UI_DRIVEN send_message_stream failed: generation timed out or was interrupted before completion",
+                    mode=self.mode,
+                )
+
+            # 2. Condition: response text must not be empty
+            if not accumulated_text or not accumulated_text.strip():
+                raise TransportError(
+                    "UI_DRIVEN send_message_stream failed: upstream assistant returned an empty response",
+                    mode=self.mode,
+                )
+
+            # 3. Condition: conversation ID must be confirmed
+            if not conv_id:
+                raise TransportError(
+                    "UI_DRIVEN send_message_stream failed: unconfirmed conversation ID",
+                    mode=self.mode,
+                )
+
+            # 4. Condition: official message IDs must be confirmed from upstream tree
+            canonical_assistant_id: Optional[str] = None
+            canonical_user_id: Optional[str] = None
+            canonical_parent_id: Optional[str] = request.parent_message_id
+
+            try:
+                session = self.session_repo.get_default()
+                token = session.credentials.access_token if session and session.credentials else ""
+                tree = await page.evaluate("""
+                    async ({url, token}) => {
+                        const headers = token ? {'Authorization': 'Bearer ' + token} : {};
+                        try {
                             const r = await fetch(url, {headers});
                             return r.ok ? await r.json() : null;
+                        } catch (e) {
+                            return null;
                         }
-                    """, {"url": f"/backend-api/conversation/{conv_id}", "token": token})
+                    }
+                """, {"url": f"/backend-api/conversation/{conv_id}", "token": token})
 
-                    if tree and isinstance(tree, dict) and tree.get("current_node"):
-                        assistant_msg_id = tree["current_node"]
-                        node = tree.get("mapping", {}).get(assistant_msg_id, {})
-                        parent_node_id = node.get("parent")
-                        if parent_node_id:
-                            request.parent_message_id = parent_node_id
-                except Exception as e:
-                    logger.debug(f"Could not refresh message IDs from tree: {e}")
+                if tree and isinstance(tree, dict) and tree.get("current_node"):
+                    canonical_assistant_id = tree["current_node"]
+                    node = tree.get("mapping", {}).get(canonical_assistant_id, {})
+                    user_node_id = node.get("parent")
+                    if user_node_id:
+                        canonical_user_id = user_node_id
+                        user_node = tree.get("mapping", {}).get(user_node_id, {})
+                        if user_node.get("parent"):
+                            canonical_parent_id = user_node["parent"]
+            except Exception as e:
+                logger.warning(f"Error resolving canonical IDs from conversation tree: {e}")
+
+            if not canonical_assistant_id or not canonical_user_id:
+                raise TransportError(
+                    f"UI_DRIVEN send_message_stream failed: canonical message IDs unconfirmed for conversation {conv_id}",
+                    mode=self.mode,
+                )
 
             yield {
                 "event": "done",
                 "text": accumulated_text,
-                "message_id": assistant_msg_id,
-                "parent_id": request.parent_message_id,
+                "message_id": canonical_assistant_id,
+                "user_message_id": canonical_user_id,
+                "parent_id": canonical_parent_id,
                 "conversation_id": conv_id,
+                "confirmed": True,
             }
 
         except Exception as e:

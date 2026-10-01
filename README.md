@@ -135,38 +135,42 @@ Ouvrez ensuite votre navigateur sur : **`http://127.0.0.1:8000`**
 
 ## 7. Commandes de Tests Reproductibles
 
-L'ensemble des critères d'acceptation et des modules fait l'objet d'une suite de tests automatisée opaque-box et d'un serveur mock haute-fidélité (`FakeChatGPTServer`).
+La conformité du POC repose sur une suite de tests automatisée (68 tests) ainsi qu'un script de recette réelle in-situ.
 
 ```bash
 source venv/bin/activate
 
-# 1. Exécution des 8 critères d'acceptation (A1 à A8)
-pytest tests/test_acceptance_criteria.py -v
-
-# 2. Exécution des tests de téléchargement Code Interpreter
-pytest tests/test_interpreter_download.py -v
-
-# 3. Exécution de l'intégralité de la suite de tests (61 tests validés)
+# 1. Exécution de l'intégralité de la suite de tests automatisés (68 tests passants)
 pytest tests/ -v
+
+# 2. Exécution des tests de régression spécifiques v1.2.0 (5 défauts de revue corrigés)
+pytest tests/test_tier1_features/test_defect_regressions.py -v
+
+# 3. Exécution de la recette réelle in-situ (POC <-> ChatGPT <-> POC)
+# Requiert une session active dans .session_data/
+PYTHONPATH=. python scripts/recipe_real_validation.py
 ```
 
 ---
 
-## 8. Critères d'Acceptation Validés (A1 à A8)
+## 8. Évaluation des Critères d'Acceptation (A1 à A8)
 
-- **A1 (Projet & Conversations)** : Découverte avec identifiants identiques à l'amont (`g-p-*`, `conv-*`).
-- **A2 (Arborescence & Branche Active)** : Résolution par CTE récursive SQLite sans duplication de prompt.
-- **A3 (Échange Sortant)** : Envoi depuis le POC avec mise à jour immédiate du `current_node` amont.
-- **A4 (Échange Entrant)** : Récupération d'un échange ajouté sur le site et poursuite immédiate.
-- **A5 (Instructions & Fichier Témoin)** : Injection prouvée du marqueur projet `[ALPHA-PROJECT-ACK]` et du canari `CANARY-OMEGA-9921-X`.
-- **A6 (Reprise après Redémarrage)** : Persistance SQLite WAL restaurée à froid en `< 15ms`.
-- **A7 (Session Expirée)** : Détection propre du 401, circuit-breaker et invitation à la reconnexion sans boucle infinie.
-- **A8 (3 Cycles de Continuité)** : 3 tours consécutifs sans perte de contexte, ni message doublé, ni conversation dupliquée.
+Les critères sont rigoureusement distingués entre validations réelles sur `chatgpt.com` et simulations contrôlées :
+
+- **A1 (Projet & Conversations)** : **DÉMONTRÉ EN RÉEL IN-SITU** — Découverte de 8 projets réels (`g-p-*`) et conversations avec identifiants identiques à l'amont.
+- **A2 (Arborescence & Branche Active)** : **DÉMONTRÉ EN RÉEL IN-SITU** — Ingestion DAG chatgpt.com et résolution de branche active par CTE récursive SQLite sans orphelins.
+- **A3 (Échange Sortant)** : **DÉMONTRÉ EN RÉEL IN-SITU** — Message transmis depuis le POC, généré par l'IA amont et visible sur `chatgpt.com`.
+- **A4 (Échange Entrant)** : **DÉMONTRÉ EN RÉEL IN-SITU** — Poursuite locale sans friction d'un fil initialisé sur le site officiel.
+- **A5 (Instructions & Fichier Témoin)** : **DÉMONTRÉ EN SIMULATION CONTRÔLÉE** — Marqueur projet `[ALPHA-PROJECT-ACK]` et canari `CANARY-OMEGA-9921-X` démontrés via test automatisé (`test_A5`). Non vérifié in-situ (absence de fichier de connaissances sur le compte de test réel).
+- **A6 (Reprise après Redémarrage)** : **DÉMONTRÉ EN RÉEL IN-SITU** — Restauration à froid (cold boot) en `< 15ms` depuis la base SQLite WAL après échanges réels.
+- **A7 (Session Expirée)** : **DÉMONTRÉ PAR TEST SÉCURITÉ** — Détection 401, circuit-breaker télémétrique, bascule propre sans boucle infinie.
+- **A8 (3 Cycles de Continuité)** : **DÉMONTRÉ EN RÉEL IN-SITU** — 3 tours réels consécutifs sur fil dédié (`6abee066-0d7c-83eb-a698-ca7899047df5`) : 0 message dupliqué, 0 fil doublé, parité 100% (voir [`RECIPE_VALIDATION_REPORT.md`](file:///var/www/POC/YOW-ChatGPT-Integration-POC-By-Antigravity/RECIPE_VALIDATION_REPORT.md)).
 
 ---
 
 ## 9. Limites et Recommandations
 
-1. **Challenges Cloudflare en mode DIRECT_HTTP** : Sur les réseaux soumis à forte vérification Cloudflare Turnstile, le mode `DIRECT_HTTP` peut nécessiter une résolution manuelle. Le mode `BROWSER_FETCH` est le transport recommandé pour une exécution sans friction.
-2. **Multi-comptes** : Non supporté dans ce POC (mono-compte conformément au périmètre).
-3. **Fichiers lourds** : Les projets volumineux avec pièces jointes multiples utilisent les références distantes d'OpenAI.
+1. **Challenges Cloudflare en mode DIRECT_HTTP** : Sur les réseaux soumis à forte vérification Cloudflare Turnstile, le mode `DIRECT_HTTP` peut être bloqué par HTTP 403. Le routeur bascule automatiquement ou de manière transparente vers `UI_DRIVEN` (Chromium Playwright) qui émule les saisies utilisateur natives et contourne intégralement Turnstile.
+2. **Protection Anti-Doublon** : En cas d'interruption de streaming après soumission, le système n'effectue aucun re-post aveugle et retourne un état `uncertain` pour préserver l'intégrité du fil.
+3. **Assainissement HTML** : Tout contenu Markdown provenant de l'amont est assaini par DOMPurify 3.1.6 avant injection dans le DOM.
+4. **Multi-comptes** : Non supporté dans ce POC (mono-compte conformément au périmètre).

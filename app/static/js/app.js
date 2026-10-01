@@ -647,8 +647,8 @@ function renderMarkdown(text, messageId = null) {
   try {
     if (window.marked && typeof window.marked.parse === "function") {
       const cleanText = text.replace(/\r\n/g, "\n");
-      const html = window.marked.parse(cleanText);
-      return html.replace(/<a\s+(?:[^>]*?\s+)?href="([^"]*)"([^>]*)>(.*?)<\/a>/gis, (match, href, rest, inner) => {
+      let html = window.marked.parse(cleanText);
+      html = html.replace(/<a\s+(?:[^>]*?\s+)?href="([^"]*)"([^>]*)>(.*?)<\/a>/gis, (match, href, rest, inner) => {
         const isSandbox = href.startsWith("sandbox:") || href.startsWith("/mnt/data/") || href.includes("sandbox:/mnt/data/");
         if (isSandbox) {
           const convId = state.activeConversationId || "";
@@ -674,6 +674,16 @@ function renderMarkdown(text, messageId = null) {
         }
         return match;
       });
+
+      // Sanitize rendered HTML before DOM insertion (R5)
+      if (window.DOMPurify && typeof window.DOMPurify.sanitize === "function") {
+        return window.DOMPurify.sanitize(html, {
+          ADD_ATTR: ["target", "data-sandbox-href", "download", "rel"],
+          ADD_TAGS: ["svg", "path", "polyline", "line"],
+        });
+      }
+
+      return html;
     }
   } catch (e) {
     console.error("Markdown parsing error:", e);
@@ -681,15 +691,32 @@ function renderMarkdown(text, messageId = null) {
   return escapeHtml(text);
 }
 
-// Delegated click handler for sandbox download links
+// Delegated click handler for sandbox download links & code/message copy buttons
 document.addEventListener("click", (e) => {
   const downloadBtn = e.target.closest(".sandbox-download-btn");
-  if (!downloadBtn) return;
-  const currentHref = downloadBtn.getAttribute("href");
-  if ((!currentHref || currentHref === "#" || currentHref.includes("/api/conversations//")) && state.activeConversationId) {
-    const rawPath = downloadBtn.dataset.sandboxHref || "";
-    if (rawPath) {
-      downloadBtn.href = `/api/conversations/${encodeURIComponent(state.activeConversationId)}/interpreter/download?sandbox_path=${encodeURIComponent(rawPath)}`;
+  if (downloadBtn) {
+    const currentHref = downloadBtn.getAttribute("href");
+    if ((!currentHref || currentHref === "#" || currentHref.includes("/api/conversations//")) && state.activeConversationId) {
+      const rawPath = downloadBtn.dataset.sandboxHref || "";
+      if (rawPath) {
+        downloadBtn.href = `/api/conversations/${encodeURIComponent(state.activeConversationId)}/interpreter/download?sandbox_path=${encodeURIComponent(rawPath)}`;
+      }
+    }
+    return;
+  }
+
+  const copyCodeBtn = e.target.closest(".btn-copy-code");
+  if (copyCodeBtn) {
+    copyCode(copyCodeBtn);
+    return;
+  }
+
+  const copyMsgBtn = e.target.closest(".btn-copy-msg-link");
+  if (copyMsgBtn) {
+    const card = copyMsgBtn.closest(".message-card");
+    const id = card ? card.dataset.id : null;
+    if (id) {
+      copyMessageLink(id, copyMsgBtn);
     }
   }
 });

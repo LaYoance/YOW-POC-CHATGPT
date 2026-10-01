@@ -16,7 +16,7 @@ from app.models.conversation import (
     PaginatedConversations,
 )
 from app.persistence.conversation_repo import ConversationRepo
-from app.transports.router import TransportRouter
+from app.transports.router import TransportRouter, get_shared_router
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class ConversationService:
         transport_router: Optional[TransportRouter] = None,
     ):
         self.conversation_repo = conversation_repo or ConversationRepo()
-        self.transport_router = transport_router or TransportRouter()
+        self.transport_router = transport_router or get_shared_router()
 
     async def list_conversations(
         self,

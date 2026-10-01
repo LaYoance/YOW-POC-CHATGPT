@@ -7,15 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.models.transport import TransportAuditRecord, TransportMode, TransportStatusReport
-from app.transports.router import TransportRouter
+from app.transports.router import TransportRouter, get_shared_router
 
 router = APIRouter(prefix="/api/transport", tags=["Transport"])
 
-_router_instance = TransportRouter()
-
 
 def get_transport_router() -> TransportRouter:
-    return _router_instance
+    return get_shared_router()
 
 
 class SetTransportModeRequest(BaseModel):

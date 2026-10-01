@@ -11,7 +11,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from app.models.conversation import ActiveBranchResponse, Conversation, Message, SendMessageRequest
 from app.persistence.conversation_repo import ConversationRepo
 from app.services.conversation_service import ConversationService
-from app.transports.router import TransportRouter
+from app.transports.router import TransportRouter, get_shared_router
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +30,10 @@ class SyncService:
     ):
         self.conversation_repo = conversation_repo or ConversationRepo()
         self.conversation_service = conversation_service or ConversationService(
-            conversation_repo=self.conversation_repo
+            conversation_repo=self.conversation_repo,
+            transport_router=transport_router,
         )
-        self.transport_router = transport_router or TransportRouter()
+        self.transport_router = transport_router or get_shared_router()
 
     async def send_and_stream(
         self,
@@ -54,10 +55,10 @@ class SyncService:
             if conv and not project_id:
                 project_id = conv.project_id
 
-        # Generate local user message
-        user_message_id = str(uuid.uuid4())
+        # Generate temporary local tracking user message
+        temp_user_message_id = str(uuid.uuid4())
         user_msg = Message(
-            id=user_message_id,
+            id=temp_user_message_id,
             conversation_id=conversation_id,
             parent_id=parent_message_id,
             role="user",
@@ -96,43 +97,63 @@ class SyncService:
                     "message_id": assistant_message_id,
                 }
 
+            elif event == "uncertain":
+                logger.warning(f"Uncertain delivery state returned from router: {chunk.get('error')}")
+                yield chunk
+                return
+
             elif event == "done":
                 accumulated_text = chunk.get("text", accumulated_text)
-                assistant_message_id = chunk.get("message_id") or assistant_message_id or str(uuid.uuid4())
+                canonical_assistant_id = chunk.get("message_id") or assistant_message_id or str(uuid.uuid4())
+                canonical_user_id = chunk.get("user_message_id")
+                canonical_parent_id = chunk.get("parent_id") or parent_message_id
 
-                # Persist to local database
+                # Reconcile full official upstream DAG tree to maintain official IDs and lineage
                 if resolved_conv_id:
-                    # Update conversation record
-                    self.conversation_repo.upsert_conversation(
-                        Conversation(
-                            id=resolved_conv_id,
-                            project_id=project_id,
-                            current_node_id=assistant_message_id,
-                        )
-                    )
+                    try:
+                        tree_data = await self.transport_router.fetch_conversation_tree(resolved_conv_id)
+                        if tree_data and isinstance(tree_data, dict):
+                            if "conversation_id" not in tree_data and "id" not in tree_data:
+                                tree_data["conversation_id"] = resolved_conv_id
+                            branch = self.conversation_service.ingest_conversation_tree(tree_data)
+                            if branch and branch.current_node:
+                                canonical_assistant_id = branch.current_node
+                                active_msgs = branch.messages
+                                if len(active_msgs) >= 2:
+                                    canonical_user_id = active_msgs[-2].id
+                                    canonical_parent_id = active_msgs[-2].parent_id
+                    except Exception as e:
+                        logger.warning(f"Post-send upstream DAG reconciliation warning: {e}")
 
-                    # Update user message conversation_id if was new chat
-                    user_msg.conversation_id = resolved_conv_id
-                    self.conversation_repo.save_messages([user_msg])
+                    # Remove synthetic temporary pre-send message if different from official ID
+                    if canonical_user_id and canonical_user_id != temp_user_message_id:
+                        with self.conversation_repo.db.get_connection() as conn:
+                            conn.execute("DELETE FROM messages WHERE id = ?;", (temp_user_message_id,))
+                    elif not canonical_user_id:
+                        # Fallback: ensure temp user message has correct conversation_id and parent
+                        canonical_user_id = temp_user_message_id
+                        user_msg.conversation_id = resolved_conv_id
+                        self.conversation_repo.save_messages([user_msg])
 
-                    # Persist assistant message
+                    # Ensure assistant message is persisted with canonical parent link
                     assistant_msg = Message(
-                        id=assistant_message_id,
+                        id=canonical_assistant_id,
                         conversation_id=resolved_conv_id,
-                        parent_id=user_message_id,
+                        parent_id=canonical_user_id,
                         role="assistant",
                         content_text=accumulated_text,
                         status="finished_successfully",
                     )
                     self.conversation_repo.save_messages([assistant_msg])
-                    self.conversation_repo.update_current_node(resolved_conv_id, assistant_message_id)
+                    self.conversation_repo.update_current_node(resolved_conv_id, canonical_assistant_id)
 
                 yield {
                     "event": "done",
                     "text": accumulated_text,
                     "conversation_id": resolved_conv_id,
-                    "message_id": assistant_message_id,
-                    "user_message_id": user_message_id,
+                    "message_id": canonical_assistant_id,
+                    "user_message_id": canonical_user_id,
+                    "parent_id": canonical_parent_id,
                 }
                 return
 
