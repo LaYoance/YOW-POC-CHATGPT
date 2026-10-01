@@ -85,7 +85,13 @@ class TransportRouter:
         fn: Callable[[ChatGPTTransport], Coroutine[Any, Any, Any]],
     ) -> Any:
         """Executes operation with automatic fallback through the transport chain."""
-        modes_to_try = [self.forced_mode] if self.forced_mode else self.fallback_chain
+        if self.forced_mode:
+            modes_to_try = [self.forced_mode]
+        elif self.last_successful_mode:
+            modes_to_try = [self.last_successful_mode] + [m for m in self.fallback_chain if m != self.last_successful_mode]
+        else:
+            modes_to_try = list(self.fallback_chain)
+
         last_exception: Optional[Exception] = None
         fallback_triggered = False
 
@@ -217,7 +223,15 @@ class TransportRouter:
         Executes streaming message transmission.
         Tries chosen or fallback transports until a stream successfully connects.
         """
-        modes_to_try = [self.forced_mode] if self.forced_mode else self.fallback_chain
+        if self.forced_mode:
+            modes_to_try = [self.forced_mode]
+        elif self.last_successful_mode:
+            modes_to_try = [self.last_successful_mode] + [m for m in self.fallback_chain if m != self.last_successful_mode]
+        else:
+            # UI_DRIVEN is prioritized for outbound message streaming to bypass Cloudflare
+            # bot-detection on programmatic POST endpoints (/backend-api/conversation)
+            modes_to_try = [TransportMode.UI_DRIVEN, TransportMode.BROWSER_FETCH, TransportMode.DIRECT_HTTP]
+
         target_id = request.conversation_id or "new_chat"
         last_exception: Optional[Exception] = None
 

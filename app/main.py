@@ -47,7 +47,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ChatGPT Integration POC",
     description="Autonomous local POC for bidirectional ChatGPT projects and conversations synchronization.",
-    version="1.0.0",
+    version="1.1.0",
     lifespan=lifespan,
 )
 

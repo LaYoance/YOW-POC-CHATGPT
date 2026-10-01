@@ -43,7 +43,7 @@ class BrowserFetchTransport(ChatGPTTransport):
         headless: Optional[bool] = None,
     ):
         self.session_repo = session_repo or SessionRepo()
-        self.user_data_dir = user_data_dir or (settings.full_session_data_dir / "chromium")
+        self.user_data_dir = user_data_dir or (settings.full_session_data_dir / "chromium_fetch")
         self.base_url = (base_url or settings.UPSTREAM_BASE_URL).rstrip("/")
         self.headless = settings.BROWSER_HEADLESS if headless is None else headless
 
@@ -74,10 +74,12 @@ class BrowserFetchTransport(ChatGPTTransport):
                 "--disable-infobars",
                 "--window-size=1280,800",
             ]
+            if self.headless:
+                args.append("--headless=new")
 
             self._context = await self._playwright.chromium.launch_persistent_context(
                 user_data_dir=str(self.user_data_dir),
-                headless=self.headless,
+                headless=False,
                 args=args,
                 viewport={"width": 1280, "height": 800},
                 user_agent=(
@@ -95,25 +97,28 @@ class BrowserFetchTransport(ChatGPTTransport):
             except Exception:
                 pass  # Already exposed
 
-            # Inject cookies from repo if available
+            # Inject cookies from repo with RFC 6265bis compliance for __Host- cookies
             session = self.session_repo.get_default()
             if session and session.credentials:
-                cookie_objs = []
                 for name, val in session.credentials.cookies.items():
-                    cookie_objs.append({
-                        "name": name,
-                        "value": val,
-                        "domain": ".chatgpt.com",
-                        "path": "/",
-                        "secure": True,
-                        "httpOnly": "session-token" in name,
-                        "sameSite": "Lax",
-                    })
-                if cookie_objs:
+                    if name.startswith("__Host-"):
+                        cookie_obj = {
+                            "name": name,
+                            "value": val,
+                            "url": "https://chatgpt.com",
+                        }
+                    else:
+                        cookie_obj = {
+                            "name": name,
+                            "value": val,
+                            "domain": ".chatgpt.com",
+                            "path": "/",
+                            "secure": True,
+                        }
                     try:
-                        await self._context.add_cookies(cookie_objs)
+                        await self._context.add_cookies([cookie_obj])
                     except Exception as e:
-                        logger.warning(f"Error injecting cookies to browser: {e}")
+                        logger.debug(f"Warning adding cookie {name}: {e}")
 
             pages = self._context.pages
             self._page = pages[0] if pages else await self._context.new_page()
@@ -143,6 +148,14 @@ class BrowserFetchTransport(ChatGPTTransport):
         """Execute window.fetch within the browser context and return parsed JSON."""
         page = await self._ensure_browser()
         url = endpoint if endpoint.startswith("http") else f"{self.base_url}{endpoint}"
+
+        session = self.session_repo.get_default()
+        custom_headers = dict(headers or {})
+        if session and session.credentials:
+            if "Authorization" not in custom_headers and session.credentials.access_token:
+                custom_headers["Authorization"] = f"Bearer {session.credentials.access_token}"
+            if "oai-device-id" not in custom_headers and session.credentials.device_id:
+                custom_headers["oai-device-id"] = session.credentials.device_id
 
         script = """
         async ({url, method, body, customHeaders}) => {
@@ -180,7 +193,7 @@ class BrowserFetchTransport(ChatGPTTransport):
             "url": url,
             "method": method,
             "body": body,
-            "customHeaders": headers or {},
+            "customHeaders": custom_headers,
         }
 
         result = await page.evaluate(script, args)
@@ -348,8 +361,7 @@ class BrowserFetchTransport(ChatGPTTransport):
 
         if request.conversation_id:
             payload["conversation_id"] = request.conversation_id
-        if request.parent_message_id:
-            payload["parent_message_id"] = request.parent_message_id
+        payload["parent_message_id"] = request.parent_message_id or str(uuid.uuid4())
 
         if request.project_id:
             payload["conversation_mode"] = {
@@ -359,14 +371,39 @@ class BrowserFetchTransport(ChatGPTTransport):
         else:
             payload["conversation_mode"] = {"kind": "primary_assistant"}
 
+        session = self.session_repo.get_default()
+        custom_headers = {
+            "Accept": "text/event-stream",
+            "Content-Type": "application/json",
+        }
+        if session and session.credentials:
+            if session.credentials.access_token:
+                custom_headers["Authorization"] = f"Bearer {session.credentials.access_token}"
+            if session.credentials.device_id:
+                custom_headers["oai-device-id"] = session.credentials.device_id
+
+        # Fetch sentinel chat-requirements token if possible
+        try:
+            sentinel_data = await self._execute_fetch_json(
+                "/backend-api/sentinel/chat-requirements",
+                method="POST",
+                body={},
+                headers={"Content-Type": "application/json"},
+            )
+            if isinstance(sentinel_data, dict) and sentinel_data.get("token"):
+                custom_headers["openai-sentinel-chat-requirements-token"] = sentinel_data["token"]
+        except Exception as e:
+            logger.debug(f"Could not retrieve sentinel token for stream: {e}")
+
         stream_script = """
-        async ({url, payload, streamId}) => {
+        async ({url, payload, streamId, customHeaders}) => {
             try {
                 const res = await window.fetch(url, {
                     method: 'POST',
                     headers: {
                         'Accept': 'text/event-stream',
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        ...customHeaders
                     },
                     body: JSON.stringify(payload),
                     credentials: 'include'
@@ -421,6 +458,7 @@ class BrowserFetchTransport(ChatGPTTransport):
                     "url": f"{self.base_url}/backend-api/conversation",
                     "payload": payload,
                     "streamId": stream_id,
+                    "customHeaders": custom_headers,
                 },
             )
         )

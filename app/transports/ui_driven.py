@@ -42,7 +42,7 @@ class UiDrivenTransport(ChatGPTTransport):
         headless: Optional[bool] = None,
     ):
         self.session_repo = session_repo or SessionRepo()
-        self.user_data_dir = user_data_dir or (settings.full_session_data_dir / "chromium")
+        self.user_data_dir = user_data_dir or (settings.full_session_data_dir / "chromium_ui")
         self.base_url = (base_url or settings.UPSTREAM_BASE_URL).rstrip("/")
         self.headless = settings.BROWSER_HEADLESS if headless is None else headless
 
@@ -56,7 +56,7 @@ class UiDrivenTransport(ChatGPTTransport):
         return TransportMode.UI_DRIVEN
 
     async def _ensure_browser(self) -> Page:
-        """Ensure Playwright browser is ready."""
+        """Ensure Playwright browser is ready with active cookies and native headless flags."""
         async with self._lock:
             if self._page and not self._page.is_closed():
                 return self._page
@@ -69,14 +69,45 @@ class UiDrivenTransport(ChatGPTTransport):
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
+                "--disable-infobars",
+                "--window-size=1280,800",
             ]
+            if self.headless:
+                args.append("--headless=new")
 
             self._context = await self._playwright.chromium.launch_persistent_context(
                 user_data_dir=str(self.user_data_dir),
-                headless=self.headless,
+                headless=False,
                 args=args,
                 viewport={"width": 1280, "height": 800},
+                user_agent=(
+                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                ),
             )
+
+            # Inject cookies from repo with RFC 6265bis compliance for __Host- cookies
+            session = self.session_repo.get_default()
+            if session and session.credentials:
+                for name, val in session.credentials.cookies.items():
+                    if name.startswith("__Host-"):
+                        c = {
+                            "name": name,
+                            "value": val,
+                            "url": "https://chatgpt.com",
+                        }
+                    else:
+                        c = {
+                            "name": name,
+                            "value": val,
+                            "domain": ".chatgpt.com",
+                            "path": "/",
+                            "secure": True,
+                        }
+                    try:
+                        await self._context.add_cookies([c])
+                    except Exception as e:
+                        logger.debug(f"UI transport cookie add error for {name}: {e}")
 
             pages = self._context.pages
             self._page = pages[0] if pages else await self._context.new_page()
@@ -233,49 +264,69 @@ class UiDrivenTransport(ChatGPTTransport):
         the assistant turn container.
         """
         page = await self._ensure_browser()
-        target_url = f"{self.base_url}/c/{request.conversation_id}" if request.conversation_id else f"{self.base_url}/"
+        if request.conversation_id:
+            target_url = f"{self.base_url}/c/{request.conversation_id}"
+        elif request.project_id:
+            target_url = f"{self.base_url}/g/{request.project_id}"
+        else:
+            target_url = f"{self.base_url}/"
 
         try:
-            if page.url != target_url:
+            if not page.url.startswith(target_url):
                 await page.goto(target_url, wait_until="domcontentloaded", timeout=20000)
 
-            # Locate textarea
-            textarea = await page.wait_for_selector(
-                "#prompt-textarea, textarea, div[contenteditable='true']",
-                state="visible",
-                timeout=10000,
+            # Locate input element (new chat home or existing conversation)
+            input_selector = (
+                "#pending-conversation-input, #pending-home-input, "
+                ".ProseMirror[contenteditable='true'], div[contenteditable='true'], "
+                "#prompt-textarea, textarea"
             )
-            if not textarea:
-                raise TransportError("Textarea input not found in UI", mode=self.mode)
+            input_el = await page.wait_for_selector(input_selector, state="visible", timeout=15000)
+            if not input_el:
+                raise TransportError("Chat input element not found in UI", mode=self.mode)
 
-            # Fill message
-            await textarea.fill(request.content)
+            # Focus and type message using real keystrokes to trigger React/ProseMirror state
+            await input_el.click()
+            await asyncio.sleep(0.2)
+            await page.keyboard.type(request.content, delay=15)
             await asyncio.sleep(0.3)
+
+            # Count existing turns to isolate newly streamed response
+            initial_turns_count = await page.evaluate("""
+                () => document.querySelectorAll('[class*="MarkdownRoot"], .markdown, [data-message-author-role="assistant"]').length
+            """)
 
             # Click send button
             send_btn = await page.query_selector(
-                'button[data-testid="send-button"], button[aria-label="Send prompt"]'
+                'button[aria-label="Send"], button[aria-label="Send prompt"], button[data-testid="send-button"]'
             )
-            if send_btn:
+            if send_btn and not await send_btn.is_disabled():
                 await send_btn.click()
             else:
-                await textarea.press("Enter")
+                await page.keyboard.press("Enter")
 
             # Poll for assistant response turn
             accumulated_text = ""
             assistant_msg_id = str(uuid.uuid4())
             conv_id = request.conversation_id
 
-            # Wait for assistant response generation to start and complete
-            for _ in range(60):
+            # Wait for assistant response generation to start and complete (up to 60s)
+            for _ in range(120):
                 await asyncio.sleep(0.5)
-                turn_text = await page.evaluate("""
-                    () => {
-                        const turns = document.querySelectorAll('[data-message-author-role="assistant"], .markdown');
-                        if (turns.length === 0) return '';
+
+                # Extract conversation ID from URL if was new chat
+                if not conv_id and "/c/" in page.url:
+                    raw_id = page.url.split("/c/")[1].split("?")[0].split("#")[0]
+                    if not raw_id.startswith("local-chatgpt"):
+                        conv_id = raw_id
+
+                turn_text = await page.evaluate(f"""
+                    () => {{
+                        const turns = document.querySelectorAll('[class*="MarkdownRoot"], .markdown, [data-message-author-role="assistant"]');
+                        if (turns.length <= {initial_turns_count}) return '';
                         const lastTurn = turns[turns.length - 1];
                         return lastTurn.innerText || '';
-                    }
+                    }}
                 """)
 
                 if turn_text and len(turn_text) > len(accumulated_text):
@@ -291,9 +342,34 @@ class UiDrivenTransport(ChatGPTTransport):
                     }
 
                 # Check if stop generating button disappeared (turn finished)
-                stop_btn = await page.query_selector('button[data-testid="stop-button"]')
+                stop_btn = await page.query_selector(
+                    'button[aria-label*="Stop"], button[data-testid*="stop"]'
+                )
                 if accumulated_text and not stop_btn:
+                    await asyncio.sleep(0.5)
                     break
+
+            # If conversation ID is known, resolve canonical IDs from upstream tree
+            if conv_id:
+                try:
+                    session = self.session_repo.get_default()
+                    token = session.credentials.access_token if session and session.credentials else ""
+                    tree = await page.evaluate("""
+                        async ({url, token}) => {
+                            const headers = token ? {'Authorization': 'Bearer ' + token} : {};
+                            const r = await fetch(url, {headers});
+                            return r.ok ? await r.json() : null;
+                        }
+                    """, {"url": f"/backend-api/conversation/{conv_id}", "token": token})
+
+                    if tree and isinstance(tree, dict) and tree.get("current_node"):
+                        assistant_msg_id = tree["current_node"]
+                        node = tree.get("mapping", {}).get(assistant_msg_id, {})
+                        parent_node_id = node.get("parent")
+                        if parent_node_id:
+                            request.parent_message_id = parent_node_id
+                except Exception as e:
+                    logger.debug(f"Could not refresh message IDs from tree: {e}")
 
             yield {
                 "event": "done",

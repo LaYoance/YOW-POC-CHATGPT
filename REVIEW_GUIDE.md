@@ -105,7 +105,14 @@ L'interface est accessible sur `http://127.0.0.1:8000`.
 
 ---
 
-## 5. Changelog / Release Notes (v1.0.0)
+## 5. Changelog / Release Notes
+
+- **v1.1.0** (2026-10-01) :
+  - **Cloudflare & Sentinel Resilience** : Intégration du mode `--headless=new` natif Chromium évitant les détections d'automatisation et blocages Turnstile 403.
+  - **RFC 6265bis Cookie Compliance** : Injection résiliente et conforme des cookies préfixés `__Host-*` (url dédiée sans attribut domain/path) prévenant les échecs globaux d'authentification de contexte Playwright.
+  - **UI-Driven Realtime Streaming** : Détection dynamique et saisie réelle via les nouveaux composants ChatGPT (`#pending-conversation-input`, `#pending-home-input`), observation en temps réel des blocs `[class*="MarkdownRoot"]`, isolation des deltas et réconciliation automatique des identifiants officiels de messages.
+  - **Priorisation de transport à l'envoi** : Optimisation de la chaîne de streaming pour router directement vers `UI_DRIVEN` sur les émissions sortantes, éliminant les temps de latence et alertes superflues sur `/backend-api/conversation`.
+  - **Context Storage Isolation** : Séparation stricte des répertoires de profil Chrome (`chromium_fetch` et `chromium_ui`) pour éliminer tout risque de collision de verrous `SingletonLock`.
 
 - **v1.0.0** (2026-10-01) :
   - **Core Bridge** : Architecture multi-transports avec bascule automatique (`BROWSER_FETCH`, `DIRECT_HTTP`, `UI_DRIVEN`).
