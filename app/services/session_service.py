@@ -570,6 +570,14 @@ class SessionService:
             has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
             use_headless = not has_display
 
+            # Ensure keyboard layout is set to French (AZERTY) on X11 / Wayland
+            if has_display and os.name == "posix":
+                try:
+                    import subprocess
+                    subprocess.run(["setxkbmap", "fr"], capture_output=True, check=False)
+                except Exception as e:
+                    logger.debug(f"Could not run setxkbmap fr: {e}")
+
             logger.info(
                 f"Launching login wizard Chromium (headless={use_headless}, display={os.environ.get('DISPLAY')})..."
             )
@@ -578,11 +586,13 @@ class SessionService:
             context = await playwright.chromium.launch_persistent_context(
                 user_data_dir=str(chromium_profile),
                 headless=use_headless,
+                locale="fr-FR",
                 args=[
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
                     "--disable-blink-features=AutomationControlled",
                     "--window-size=1280,900",
+                    "--lang=fr-FR",
                 ],
             )
             self._current_wizard_context = context
