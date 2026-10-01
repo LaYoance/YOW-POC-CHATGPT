@@ -42,27 +42,15 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupEventListeners();
 
   window.addEventListener("popstate", async () => {
-    const convId = getConversationIdFromUrl();
-    if (convId) {
-      await selectConversation(convId, false, false);
-    } else {
-      state.activeConversationId = null;
-      activeTitle.textContent = "Nouvelle conversation";
-      messagesContainer.innerHTML = '<div style="text-align: center; color: var(--text-muted); margin-top: 100px;">Nouvelle conversation prête. Posez votre question.</div>';
-      document.querySelectorAll(".item-row").forEach(el => el.classList.remove("active"));
-    }
+    await handleUrlNavigation(false);
   });
 
   await loadSessionStatus();
   await loadProjects();
-  await loadConversations();
   await loadTransportStatus();
 
-  // Deep-link to conversation from URL
-  const initialConvId = getConversationIdFromUrl();
-  if (initialConvId) {
-    await selectConversation(initialConvId, false, false);
-  }
+  // Initial routing from URL
+  await handleUrlNavigation(false);
 });
 
 function setupEventListeners() {
@@ -152,10 +140,15 @@ function setupEventListeners() {
 
   btnNewChat.addEventListener("click", () => {
     state.activeConversationId = null;
-    activeTitle.textContent = "Nouvelle conversation";
+    if (state.activeProjectId) {
+      const proj = state.projects.find(p => p.id === state.activeProjectId);
+      activeTitle.textContent = proj ? `Nouvelle conversation (${proj.title})` : "Nouvelle conversation";
+    } else {
+      activeTitle.textContent = "Nouvelle conversation";
+    }
     messagesContainer.innerHTML = '<div style="text-align: center; color: var(--text-muted); margin-top: 100px;">Nouvelle conversation prête. Posez votre question.</div>';
-    document.querySelectorAll(".item-row").forEach(el => el.classList.remove("active"));
-    updateUrlForConversation(null);
+    document.querySelectorAll("#conversations-list .item-row").forEach(el => el.classList.remove("active"));
+    updateAppUrl(state.activeProjectId, null, false);
   });
 
   btnSend.addEventListener("click", handleSendMessage);
@@ -250,34 +243,61 @@ async function loadProjects() {
     // Default "All" option
     const allRow = document.createElement("div");
     allRow.className = "item-row" + (state.activeProjectId === null ? " active" : "");
+    allRow.dataset.all = "true";
     allRow.innerHTML = '<span class="item-title">Tous les projets</span>';
     allRow.addEventListener("click", () => {
-      state.activeProjectId = null;
-      activeProjectTag.classList.add("hidden");
-      loadProjects();
-      loadConversations();
+      selectProject(null, true);
     });
     projectsList.appendChild(allRow);
 
     for (const p of state.projects) {
       const row = document.createElement("div");
       row.className = "item-row" + (state.activeProjectId === p.id ? " active" : "");
+      row.dataset.id = p.id;
       row.innerHTML = `
         <span class="item-title">${escapeHtml(p.title)}</span>
-        <span class="item-meta">${p.files.length} fichier(s)</span>
+        <span class="item-meta">${p.files ? p.files.length : 0} fichier(s)</span>
       `;
       row.addEventListener("click", () => {
-        state.activeProjectId = p.id;
-        activeProjectTag.textContent = p.title;
-        activeProjectTag.classList.remove("hidden");
-        loadProjects();
-        loadConversations();
+        selectProject(p.id, true);
       });
       projectsList.appendChild(row);
     }
   } catch (e) {
     projectsList.innerHTML = '<div class="item-meta" style="color: var(--danger-color); padding: 4px 8px;">Erreur projets</div>';
   }
+}
+
+async function selectProject(projId, updateUrl = true) {
+  state.activeProjectId = projId;
+  const project = state.projects.find(p => p.id === projId);
+
+  if (project) {
+    activeProjectTag.textContent = project.title;
+    activeProjectTag.classList.remove("hidden");
+  } else {
+    activeProjectTag.classList.add("hidden");
+  }
+
+  highlightActiveProjectRow(projId);
+
+  // If there is an active conversation, check if it belongs to this project
+  if (state.activeConversationId) {
+    const currentConv = state.conversations.find(c => c.id === state.activeConversationId);
+    if (!currentConv || (projId && currentConv.project_id !== projId)) {
+      state.activeConversationId = null;
+      activeTitle.textContent = project ? `Nouvelle conversation (${project.title})` : "Nouvelle conversation";
+      messagesContainer.innerHTML = '<div style="text-align: center; color: var(--text-muted); margin-top: 100px;">Nouvelle conversation prête. Posez votre question.</div>';
+    }
+  } else {
+    activeTitle.textContent = project ? `Nouvelle conversation (${project.title})` : "Nouvelle conversation";
+  }
+
+  if (updateUrl) {
+    updateAppUrl(state.activeProjectId, state.activeConversationId, false);
+  }
+
+  await loadConversations();
 }
 
 async function loadConversations() {
@@ -314,9 +334,6 @@ async function loadConversations() {
 
 async function selectConversation(convId, forceSync = false, updateUrl = true) {
   state.activeConversationId = convId;
-  if (updateUrl) {
-    updateUrlForConversation(convId);
-  }
 
   const conv = state.conversations.find(c => c.id === convId);
   if (conv) {
@@ -347,6 +364,36 @@ async function selectConversation(convId, forceSync = false, updateUrl = true) {
 
     if (branch.title) {
       activeTitle.textContent = branch.title;
+    }
+
+    // Synchronize project context with conversation
+    if (branch.project_id) {
+      const prevProjectId = state.activeProjectId;
+      state.activeProjectId = branch.project_id;
+      const proj = state.projects.find(p => p.id === branch.project_id);
+      if (proj) {
+        activeProjectTag.textContent = proj.title;
+        activeProjectTag.classList.remove("hidden");
+      }
+      highlightActiveProjectRow(branch.project_id);
+      if (prevProjectId !== branch.project_id) {
+        await loadConversations();
+      }
+    } else if (state.activeProjectId && !state.conversations.find(c => c.id === convId && c.project_id === state.activeProjectId)) {
+      state.activeProjectId = null;
+      activeProjectTag.classList.add("hidden");
+      highlightActiveProjectRow(null);
+      await loadConversations();
+    }
+
+    if (updateUrl) {
+      updateAppUrl(state.activeProjectId, convId, false);
+    } else {
+      // Direct navigation: canonicalize URL if needed (e.g. /c/{id} -> /g/{proj}/c/{id})
+      const expectedUrl = getAppUrl(state.activeProjectId, convId);
+      if (window.location.pathname !== expectedUrl) {
+        updateAppUrl(state.activeProjectId, convId, true);
+      }
     }
 
     renderActiveBranch(state.activeBranchMessages);
@@ -449,7 +496,7 @@ async function handleSendMessage() {
               textEl.innerHTML = renderMarkdown(accumulatedText) + '<span class="cursor"></span>';
               if (data.conversation_id && !state.activeConversationId) {
                 state.activeConversationId = data.conversation_id;
-                updateUrlForConversation(data.conversation_id);
+                updateAppUrl(state.activeProjectId, data.conversation_id, false);
               }
               scrollToBottom();
             } else if (data.event === "done") {
@@ -457,7 +504,7 @@ async function handleSendMessage() {
               textEl.innerHTML = renderMarkdown(accumulatedText);
               if (data.conversation_id) {
                 state.activeConversationId = data.conversation_id;
-                updateUrlForConversation(data.conversation_id);
+                updateAppUrl(state.activeProjectId, data.conversation_id, false);
               }
               scrollToBottom();
             } else if (data.event === "error") {
@@ -582,23 +629,164 @@ function escapeHtml(str) {
     .replace(/'/g, "&#039;");
 }
 
-function getConversationIdFromUrl() {
-  const match = window.location.pathname.match(/^\/c\/([a-zA-Z0-9_-]+)/);
-  if (match) return match[1];
+function getProjectSlug(project) {
+  if (!project) return "";
+  const titleSlug = (project.title || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 
-  const params = new URLSearchParams(window.location.search);
-  return params.get("c") || params.get("conversation_id");
+  if (project.id && titleSlug && titleSlug !== "project") {
+    return `${project.id}-${titleSlug}`;
+  }
+  return project.id || titleSlug;
 }
 
-function updateUrlForConversation(convId) {
-  if (convId) {
-    const targetUrl = `/c/${convId}`;
-    if (window.location.pathname !== targetUrl) {
-      window.history.pushState({ conversationId: convId }, "", targetUrl);
+function findProjectByToken(token) {
+  if (!token || !state.projects || !state.projects.length) return null;
+  const cleanToken = decodeURIComponent(token).trim().toLowerCase();
+
+  // 1. Exact ID match (case-insensitive)
+  let found = state.projects.find(p => p.id && p.id.toLowerCase() === cleanToken);
+  if (found) return found;
+
+  // 2. ID prefix match (e.g. g-p-6aad8a7e9d148191b77a9c5de7b40c44-yow-...)
+  found = state.projects.find(p => p.id && cleanToken.startsWith(p.id.toLowerCase()));
+  if (found) return found;
+
+  // 3. getProjectSlug match
+  found = state.projects.find(p => getProjectSlug(p).toLowerCase() === cleanToken);
+  if (found) return found;
+
+  // 4. Title slug match
+  found = state.projects.find(p => {
+    const titleSlug = (p.title || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+    return titleSlug && titleSlug === cleanToken;
+  });
+  if (found) return found;
+
+  return null;
+}
+
+function parseUrlRouting() {
+  const pathname = window.location.pathname;
+  let projectToken = null;
+  let convId = null;
+
+  // Format 1: /(g|p|project)/:projectToken/c/:convId
+  const projConvMatch = pathname.match(/^\/(?:g|p|project)\/([^/]+)\/c\/([^/]+)/);
+  if (projConvMatch) {
+    projectToken = projConvMatch[1];
+    convId = projConvMatch[2];
+  } else {
+    // Format 2: /(g|p|project)/:projectToken
+    const projMatch = pathname.match(/^\/(?:g|p|project)\/([^/]+)/);
+    if (projMatch) {
+      projectToken = projMatch[1];
+    } else {
+      // Format 3: /c/:convId
+      const convMatch = pathname.match(/^\/c\/([^/]+)/);
+      if (convMatch) {
+        convId = convMatch[1];
+      }
+    }
+  }
+
+  // Query parameter fallback
+  const params = new URLSearchParams(window.location.search);
+  if (!convId) {
+    convId = params.get("c") || params.get("conversation_id");
+  }
+  if (!projectToken) {
+    projectToken = params.get("project") || params.get("project_id") || params.get("p") || params.get("g");
+  }
+
+  return { projectToken, convId };
+}
+
+function getAppUrl(projectId, convId) {
+  let projectToken = null;
+  if (projectId) {
+    const project = state.projects.find(p => p.id === projectId);
+    projectToken = project ? getProjectSlug(project) : projectId;
+  }
+
+  if (projectToken && convId) {
+    return `/g/${projectToken}/c/${convId}`;
+  } else if (projectToken) {
+    return `/g/${projectToken}`;
+  } else if (convId) {
+    return `/c/${convId}`;
+  } else {
+    return "/";
+  }
+}
+
+function updateAppUrl(projectId, convId, replace = false) {
+  const targetUrl = getAppUrl(projectId, convId);
+  if (window.location.pathname !== targetUrl) {
+    const stateObj = { projectId, conversationId: convId };
+    if (replace) {
+      window.history.replaceState(stateObj, "", targetUrl);
+    } else {
+      window.history.pushState(stateObj, "", targetUrl);
+    }
+  }
+}
+
+function highlightActiveProjectRow(projId) {
+  document.querySelectorAll("#projects-list .item-row").forEach(el => {
+    if ((projId && el.dataset.id === projId) || (!projId && el.dataset.all === "true")) {
+      el.classList.add("active");
+    } else {
+      el.classList.remove("active");
+    }
+  });
+}
+
+async function handleUrlNavigation(updateUrl = false) {
+  const { projectToken, convId } = parseUrlRouting();
+
+  let resolvedProject = null;
+  if (projectToken) {
+    resolvedProject = findProjectByToken(projectToken);
+    state.activeProjectId = resolvedProject ? resolvedProject.id : projectToken;
+    if (resolvedProject) {
+      activeProjectTag.textContent = resolvedProject.title;
+      activeProjectTag.classList.remove("hidden");
+    } else {
+      activeProjectTag.textContent = projectToken;
+      activeProjectTag.classList.remove("hidden");
     }
   } else {
-    if (window.location.pathname !== "/") {
-      window.history.pushState({ conversationId: null }, "", "/");
+    state.activeProjectId = null;
+    activeProjectTag.classList.add("hidden");
+  }
+
+  highlightActiveProjectRow(state.activeProjectId);
+  await loadConversations();
+
+  if (convId) {
+    await selectConversation(convId, false, updateUrl);
+  } else {
+    state.activeConversationId = null;
+    activeTitle.textContent = resolvedProject ? `Nouvelle conversation (${resolvedProject.title})` : "Nouvelle conversation";
+    messagesContainer.innerHTML = '<div style="text-align: center; color: var(--text-muted); margin-top: 100px;">Nouvelle conversation prête. Posez votre question.</div>';
+    document.querySelectorAll("#conversations-list .item-row").forEach(el => el.classList.remove("active"));
+    if (updateUrl) {
+      updateAppUrl(state.activeProjectId, null, false);
+    } else if (resolvedProject) {
+      const expectedUrl = getAppUrl(state.activeProjectId, null);
+      if (window.location.pathname !== expectedUrl) {
+        updateAppUrl(state.activeProjectId, null, true);
+      }
     }
   }
 }

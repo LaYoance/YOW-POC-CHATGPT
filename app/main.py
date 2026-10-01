@@ -82,6 +82,21 @@ if (STATIC_DIR / "index.html").exists():
     @app.get("/c/{conversation_id}/", include_in_schema=False)
     async def serve_conversation(conversation_id: str):
         return FileResponse(str(STATIC_DIR / "index.html"))
+
+    @app.get("/g/{project_id}", include_in_schema=False)
+    @app.get("/g/{project_id}/", include_in_schema=False)
+    @app.get("/g/{project_id}/c/{conversation_id}", include_in_schema=False)
+    @app.get("/g/{project_id}/c/{conversation_id}/", include_in_schema=False)
+    @app.get("/p/{project_id}", include_in_schema=False)
+    @app.get("/p/{project_id}/", include_in_schema=False)
+    @app.get("/p/{project_id}/c/{conversation_id}", include_in_schema=False)
+    @app.get("/p/{project_id}/c/{conversation_id}/", include_in_schema=False)
+    @app.get("/project/{project_id}", include_in_schema=False)
+    @app.get("/project/{project_id}/", include_in_schema=False)
+    @app.get("/project/{project_id}/c/{conversation_id}", include_in_schema=False)
+    @app.get("/project/{project_id}/c/{conversation_id}/", include_in_schema=False)
+    async def serve_project_spa(project_id: str, conversation_id: str = ""):
+        return FileResponse(str(STATIC_DIR / "index.html"))
 else:
     @app.get("/", include_in_schema=False)
     async def serve_fallback_index():
