@@ -339,6 +339,7 @@ function appendMessageCard(role, text, id = null) {
 
   const roleLabel = role === "user" ? "Vous" : "ChatGPT";
   const avatarText = role === "user" ? "U" : "AI";
+  const htmlContent = renderMarkdown(text);
 
   card.innerHTML = `
     <div class="avatar ${role}">${avatarText}</div>
@@ -346,7 +347,7 @@ function appendMessageCard(role, text, id = null) {
       <div class="message-header">
         <span>${roleLabel}</span>
       </div>
-      <div class="message-text">${escapeHtml(text)}</div>
+      <div class="message-text">${htmlContent}</div>
     </div>
   `;
   messagesContainer.appendChild(card);
@@ -409,14 +410,14 @@ async function handleSendMessage() {
             const data = JSON.parse(trimmed.slice(6));
             if (data.event === "delta") {
               accumulatedText = data.text || (accumulatedText + (data.delta || ""));
-              textEl.innerHTML = escapeHtml(accumulatedText) + '<span class="cursor"></span>';
+              textEl.innerHTML = renderMarkdown(accumulatedText) + '<span class="cursor"></span>';
               if (data.conversation_id && !state.activeConversationId) {
                 state.activeConversationId = data.conversation_id;
               }
               scrollToBottom();
             } else if (data.event === "done") {
               accumulatedText = data.text || accumulatedText;
-              textEl.innerHTML = escapeHtml(accumulatedText);
+              textEl.innerHTML = renderMarkdown(accumulatedText);
               if (data.conversation_id) {
                 state.activeConversationId = data.conversation_id;
               }
@@ -431,7 +432,7 @@ async function handleSendMessage() {
       }
     }
 
-    textEl.innerHTML = escapeHtml(accumulatedText);
+    textEl.innerHTML = renderMarkdown(accumulatedText);
     await loadConversations();
   } catch (e) {
     textEl.innerHTML = `<span style="color: var(--danger-color);">Erreur réseau : ${e.message}</span>`;
@@ -443,6 +444,24 @@ async function handleSendMessage() {
 
 function scrollToBottom() {
   messagesContainer.scrollTop = messagesContainer.scrollHeight;
+}
+
+function renderMarkdown(text) {
+  if (!text) return "";
+  try {
+    if (window.marked && typeof window.marked.parse === "function") {
+      const html = window.marked.parse(text, { breaks: true, gfm: true });
+      return html.replace(/<a\s+(?:[^>]*?\s+)?href="([^"]*)"([^>]*)>/gi, (match, href, rest) => {
+        if (!rest.includes("target=")) {
+          return `<a href="${href}" target="_blank" rel="noopener noreferrer"${rest}>`;
+        }
+        return match;
+      });
+    }
+  } catch (e) {
+    console.error("Markdown parsing error:", e);
+  }
+  return escapeHtml(text);
 }
 
 function escapeHtml(str) {
