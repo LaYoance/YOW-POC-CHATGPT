@@ -18,6 +18,7 @@ from app.persistence.transport_log_repo import TransportLogRepo
 from app.transports.base import (
     ChatGPTTransport,
     CloudflareChallengeError,
+    ConversationNotFoundError,
     SessionExpiredError,
     TransportError,
 )
@@ -159,6 +160,25 @@ class TransportRouter:
                     )
                 )
                 # Session expiration affects all transports; do not cycle fruitlessly
+                raise
+
+            except ConversationNotFoundError as e:
+                latency_ms = (time.perf_counter() - start_time) * 1000
+                self.consecutive_failures[mode.value] += 1
+                self.log_repo.log_operation(
+                    TransportAuditRecord(
+                        operation=operation_name,
+                        attempted_mode=attempted_mode,
+                        resolved_mode=mode,
+                        target_id=target_id,
+                        status_code=404,
+                        latency_ms=latency_ms,
+                        success=False,
+                        error_message=str(e),
+                        fallback_triggered=fallback_triggered,
+                    )
+                )
+                # Conversation is deleted or not found upstream; do not cycle fallbacks
                 raise
 
             except Exception as e:

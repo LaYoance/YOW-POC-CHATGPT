@@ -19,6 +19,7 @@ from app.persistence.session_repo import SessionRepo
 from app.transports.base import (
     ChatGPTTransport,
     CloudflareChallengeError,
+    ConversationNotFoundError,
     RateLimitError,
     SessionExpiredError,
     TransportError,
@@ -83,6 +84,8 @@ class DirectHttpTransport(ChatGPTTransport):
         """Inspect status code and response body for anti-bot / auth errors."""
         if status_code == 401:
             raise SessionExpiredError(f"Upstream returned 401 Unauthorized: {text[:200]}", status_code=401, mode=self.mode)
+        elif status_code == 404:
+            raise ConversationNotFoundError(f"Upstream returned 404 Not Found: {text[:200]}", status_code=404, mode=self.mode)
         elif status_code == 403:
             raise CloudflareChallengeError(f"Cloudflare Turnstile/403 challenge encountered: {text[:200]}", status_code=403, mode=self.mode)
         elif status_code == 429:

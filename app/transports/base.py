@@ -25,6 +25,12 @@ class SessionExpiredError(TransportError):
     pass
 
 
+class ConversationNotFoundError(TransportError):
+    """Raised when upstream returns 404 (e.g. conversation deleted or not found)."""
+    def __init__(self, message: str, status_code: int = 404, mode: Optional[TransportMode] = None):
+        super().__init__(message, status_code=status_code, mode=mode)
+
+
 class CloudflareChallengeError(TransportError):
     """Raised when request is blocked by Cloudflare (403, Turnstile, or PoW challenge)."""
     pass

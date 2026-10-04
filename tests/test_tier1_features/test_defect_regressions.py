@@ -1,11 +1,12 @@
 """
-Regression Test Suite for v1.1.0 Review Defects (v1.2.0 Hardening).
+Regression Test Suite for Review Defects & Transport Hardening (v1.3.0).
 Covers:
 1. TransportRouter: Anti-duplicate protection on interrupted stream, upstream reconciliation or uncertain state.
 2. UiDrivenTransport: Strict rejection of empty response, timeout, or unconfirmed message IDs.
 3. SyncService: Official user & assistant ID preservation and upstream DAG reconciliation.
 4. Shared Router: Single shared instance across routes and services; strict forced mode enforcement.
 5. DOM / Markdown: HTML sanitization with DOMPurify and script tag elimination.
+6. 404 & UI_DRIVEN Robustness: Immediate short-circuit on ConversationNotFoundError and absolute URL execution in UI evaluation.
 """
 
 import asyncio
@@ -408,3 +409,54 @@ def test_dompurify_script_served_and_referenced():
     res_app = client.get("/static/js/app.js")
     assert res_app.status_code == 200
     assert "window.DOMPurify.sanitize" in res_app.text
+
+
+# ---------------------------------------------------------------------------
+# Defect 6: 404 ConversationNotFoundError short-circuits failovers and returns 404
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_router_short_circuits_on_conversation_not_found():
+    """
+    When upstream returns 404 (conversation deleted/not found), router must immediately
+    raise ConversationNotFoundError without cycling through fallback modes.
+    """
+    router = TransportRouter(log_repo=MagicMock())
+
+    class NotFoundTransport(DummyMockTransport):
+        async def fetch_conversation_tree(self, conversation_id: str):
+            self.send_call_count += 1
+            from app.transports.base import ConversationNotFoundError
+            raise ConversationNotFoundError("Conversation has been deleted", mode=self.mode)
+
+    class BackupTransport(DummyMockTransport):
+        async def fetch_conversation_tree(self, conversation_id: str):
+            self.send_call_count += 1
+            return {"current_node": "never_reached"}
+
+    t1 = NotFoundTransport(TransportMode.DIRECT_HTTP)
+    t2 = BackupTransport(TransportMode.BROWSER_FETCH)
+    router.transports = {TransportMode.DIRECT_HTTP: t1, TransportMode.BROWSER_FETCH: t2}
+    router.fallback_chain = [TransportMode.DIRECT_HTTP, TransportMode.BROWSER_FETCH]
+
+    from app.transports.base import ConversationNotFoundError
+    with pytest.raises(ConversationNotFoundError):
+        await router.fetch_conversation_tree("deleted-conv-id")
+
+    assert t1.send_call_count == 1
+    assert t2.send_call_count == 0
+
+
+def test_api_returns_404_on_conversation_not_found(clean_shared_router):
+    """API endpoint /api/conversations/{id}/branch returns HTTP 404 instead of 500 when upstream 404 is encountered."""
+    from app.transports.base import ConversationNotFoundError
+    client = TestClient(app)
+
+    with patch.object(
+        clean_shared_router,
+        "fetch_conversation_tree",
+        AsyncMock(side_effect=ConversationNotFoundError("Conversation has been deleted")),
+    ):
+        res = client.get("/api/conversations/non-existent-id/branch?sync=true")
+        assert res.status_code == 404
+        assert "Conversation has been deleted" in res.json()["detail"]

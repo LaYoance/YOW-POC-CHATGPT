@@ -33,7 +33,17 @@ class ConversationService:
         transport_router: Optional[TransportRouter] = None,
     ):
         self.conversation_repo = conversation_repo or ConversationRepo()
-        self.transport_router = transport_router or get_shared_router()
+        self._transport_router = transport_router
+
+    @property
+    def transport_router(self) -> TransportRouter:
+        if self._transport_router is not None:
+            return self._transport_router
+        return get_shared_router()
+
+    @transport_router.setter
+    def transport_router(self, router: TransportRouter) -> None:
+        self._transport_router = router
 
     async def list_conversations(
         self,

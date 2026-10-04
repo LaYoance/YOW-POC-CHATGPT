@@ -1,7 +1,7 @@
-# Rapport de Vérification & Recette d'Acceptation (A1 à A8) — v1.2.0
+# Rapport de Vérification & Recette d'Acceptation (A1 à A8) — v1.3.0
 
-**Statut Global** : `POC_QUALIFIED` (Durcissement v1.2.0 — Critères A1, A2, A3, A4, A6, A8 démontrés en réel in-situ ; A7 et régressions démontrés par tests de sécurité ; A5 démontré en simulation contrôlée).  
-**Date d'exécution** : 2026-10-02  
+**Statut Global** : `POC_QUALIFIED` (Durcissement v1.3.0 — Critères A1, A2, A3, A4, A6, A8 démontrés en réel in-situ ; A7 et régressions démontrés par tests de sécurité et durcissement ; A5 démontré en simulation contrôlée).  
+**Date d'exécution** : 2026-10-04  
 **Environnement** : Linux (x86_64), Python 3.12, SQLite 3 (WAL), Playwright Chromium headless, curl_cffi  
 **Rapport de Recette Réelle Associé** : [`RECIPE_VALIDATION_REPORT.md`](file:///var/www/POC/YOW-ChatGPT-Integration-POC-By-Antigravity/RECIPE_VALIDATION_REPORT.md)
 
@@ -11,7 +11,7 @@
 
 Conformément aux exigences de rigueur technique, le présent rapport sépare strictement :
 1. **Les vérifications réelles in-situ** exécutées directement contre l'infrastructure de production [chatgpt.com](https://chatgpt.com) avec une session active authentifiée.
-2. **Les tests de régression et de sécurité** exécutés hermétiquement via la suite automatisée (68 tests pytest).
+2. **Les tests de régression et de sécurité** exécutés hermétiquement via la suite automatisée (70 tests pytest).
 3. **Les tests simulés** exécutés contre un mock haute-fidélité (`FakeChatGPTServer`).
 4. **Les résultats non vérifiés in-situ** nécessitant une intervention ou configuration humaine préalable.
 
@@ -72,6 +72,16 @@ Cinq défauts majeurs identifiés lors de la revue v1.1.0 ont été corrigés et
   - Intégration de DOMPurify 3.1.6 (`/static/js/dompurify.min.js`).
   - Assainissement strict avant insertion : `DOMPurify.sanitize(html, { ADD_ATTR: [...], ADD_TAGS: [...] })`.
   - Neutralisation des balises `<script>` et attributs malveillants tout en préservant les boutons de copie et liens sandbox avec délégation d'événements.
+
+### 6. Robustesse UI_DRIVEN & Court-Circuit Typé 404 (v1.3.0)
+- **Problème v1.2.0** : 
+  - Lorsque la page Playwright n'avait pas encore navigué sur le domaine cible, l'évaluation de chemins relatifs (`fetch('/backend-api/...')`) échouait avec `TypeError: Failed to parse URL`.
+  - Lors de la suppression d'une conversation amont (`conversation_deleted` 404), le routeur parcourait inutilement la chaîne de transports, puis levait une erreur 500 générique sur `/branch?sync=true`.
+- **Correction v1.3.0** :
+  - Navigation proactive vers `base_url` dans `UiDrivenTransport._ensure_browser()` et passage systématique d'URLs absolues dans les contextes d'évaluation DOM.
+  - Création de `ConversationNotFoundError` (`status_code=404`) levée par l'ensemble des transports sur réponse 404 amont.
+  - Court-circuit immédiat de la cascade de fallbacks dans `TransportRouter._execute_with_failover`.
+  - Retour d'un statut HTTP 404 propre avec message explicatif sur l'endpoint `/api/conversations/{id}/branch`.
 
 ---
 

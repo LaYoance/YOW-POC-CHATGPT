@@ -135,15 +135,15 @@ Ouvrez ensuite votre navigateur sur : **`http://127.0.0.1:8000`**
 
 ## 7. Commandes de Tests Reproductibles
 
-La conformité du POC repose sur une suite de tests automatisée (68 tests) ainsi qu'un script de recette réelle in-situ.
+La conformité du POC repose sur une suite de tests automatisée (70 tests) ainsi qu'un script de recette réelle in-situ.
 
 ```bash
 source venv/bin/activate
 
-# 1. Exécution de l'intégralité de la suite de tests automatisés (68 tests passants)
+# 1. Exécution de l'intégralité de la suite de tests automatisés (70 tests passants)
 pytest tests/ -v
 
-# 2. Exécution des tests de régression spécifiques v1.2.0 (5 défauts de revue corrigés)
+# 2. Exécution des tests de régression et durcissement (test_defect_regressions.py)
 pytest tests/test_tier1_features/test_defect_regressions.py -v
 
 # 3. Exécution de la recette réelle in-situ (POC <-> ChatGPT <-> POC)

@@ -21,6 +21,7 @@ from app.persistence.session_repo import SessionRepo
 from app.transports.base import (
     ChatGPTTransport,
     CloudflareChallengeError,
+    ConversationNotFoundError,
     RateLimitError,
     SessionExpiredError,
     TransportError,
@@ -203,6 +204,8 @@ class BrowserFetchTransport(ChatGPTTransport):
         if not result.get("ok"):
             if status == 401:
                 raise SessionExpiredError(f"401 Unauthorized from browser fetch: {raw_text[:200]}", status_code=401, mode=self.mode)
+            elif status == 404:
+                raise ConversationNotFoundError(f"404 Not Found from browser fetch: {raw_text[:200]}", status_code=404, mode=self.mode)
             elif status == 403:
                 raise CloudflareChallengeError(f"403 Forbidden / Cloudflare challenge in browser: {raw_text[:200]}", status_code=403, mode=self.mode)
             elif status == 429:

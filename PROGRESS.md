@@ -1,11 +1,11 @@
 # Journal d'Avancement — YOW ChatGPT Integration POC
 
-## Statut Global: `POC_QUALIFIED` (Durcissement v1.2.0)
-Dernière mise à jour: 2026-10-02T00:42:00Z
+## Statut Global: `POC_QUALIFIED` (Durcissement v1.3.0)
+Dernière mise à jour: 2026-10-04T22:15:00Z
 
 > **Règle de classification** : Aucun `POC_VALIDATED` absolu tant que l'ensemble A1 à A8 n'est pas intégralement certifié in-situ.  
 > Les critères **A1, A2, A3, A4, A6, A8** sont **démontrés en conditions réelles** sur [chatgpt.com](https://chatgpt.com) (voir [`RECIPE_VALIDATION_REPORT.md`](file:///var/www/POC/YOW-ChatGPT-Integration-POC-By-Antigravity/RECIPE_VALIDATION_REPORT.md)).  
-> Le critère **A7** et les 5 défauts de revue sont démontrés par **tests de sécurité et de régression** (68/68 passants).  
+> Le critère **A7** et les défauts de revue/transports sont démontrés par **tests de sécurité et de régression** (70/70 passants).  
 > Le critère **A5** est démontré en **simulation contrôlée** (non vérifié in-situ, faute de projet avec fichier attaché sur le compte réel).
 
 ---
@@ -36,8 +36,15 @@ Dernière mise à jour: 2026-10-02T00:42:00Z
 
 ---
 
-## 3. Synthèse des 5 Corrections de Revue v1.2.0
+## 3. Synthèse des Évolutions & Durcissements
 
+### Corrections v1.3.0 (Transport & 404 Resilience)
+1. **Résilience UI_DRIVEN** : Résolution systématique en URLs absolues et navigation proactive vers `self.base_url` dans le contexte Playwright, éliminant l'erreur `TypeError: Failed to parse URL`.
+2. **Gestion typée 404 (`ConversationNotFoundError`)** : Interception unifiée des suppressions de conversations amont dans `DIRECT_HTTP`, `BROWSER_FETCH` et `UI_DRIVEN`.
+3. **Court-circuit immédiat du routeur** : Interruption directe de la boucle de repli lors d'un 404 amont au lieu d'épuiser inutilement la chaîne de transports.
+4. **Code HTTP 404 sur `/branch`** : L'API locale retourne désormais un statut HTTP 404 propre au lieu d'un 500 générique en cas de conversation absente ou supprimée en amont.
+
+### Corrections de Revue v1.2.0
 1. **Anti-doublon router** : Verrou par conversation + détection de soumission potentiellement acceptée + interdiction de repli concurrent + repli d'incertitude `{"event": "uncertain"}`.
 2. **Validation stricte UI-driven** : Rejet systématique en cas de timeout (`generation_completed=False`), texte vide ou identifiants non confirmés.
 3. **Réconciliation DAG SyncService** : Remplacement de l'UUID utilisateur temporaire par l'identifiant officiel de chatgpt.com après l'envoi.
@@ -48,5 +55,5 @@ Dernière mise à jour: 2026-10-02T00:42:00Z
 
 ## 4. Livrables et Preuves
 - **Rapport de recette réelle** : [`RECIPE_VALIDATION_REPORT.md`](file:///var/www/POC/YOW-ChatGPT-Integration-POC-By-Antigravity/RECIPE_VALIDATION_REPORT.md)
-- **Suite de tests automatisée** : 68 tests (100% passants)
+- **Suite de tests automatisée** : 70 tests (100% passants)
 - **Script de recette reproductible** : `scripts/recipe_real_validation.py`

@@ -20,6 +20,7 @@ from app.persistence.session_repo import SessionRepo
 from app.transports.base import (
     ChatGPTTransport,
     CloudflareChallengeError,
+    ConversationNotFoundError,
     RateLimitError,
     SessionExpiredError,
     TransportError,
@@ -111,6 +112,15 @@ class UiDrivenTransport(ChatGPTTransport):
 
             pages = self._context.pages
             self._page = pages[0] if pages else await self._context.new_page()
+
+            # Ensure page is on base domain before executing DOM fetch calls
+            try:
+                current_url = getattr(self._page, "url", "")
+                if not current_url or not current_url.startswith(self.base_url):
+                    await self._page.goto(f"{self.base_url}/", wait_until="domcontentloaded", timeout=15000)
+            except Exception as e:
+                logger.warning(f"UI transport initial navigation warning: {e}")
+
             return self._page
 
     async def check_session(self) -> SessionStatusResponse:
@@ -144,12 +154,17 @@ class UiDrivenTransport(ChatGPTTransport):
         page = await self._ensure_browser()
         try:
             # First try evaluating in DOM context for fidelity
+            target_url = f"{self.base_url}/backend-api/gizmos/snorlax/sidebar"
             res = await page.evaluate("""
-                async () => {
-                    const r = await fetch('/backend-api/gizmos/snorlax/sidebar');
-                    return r.ok ? await r.json() : null;
+                async (url) => {
+                    try {
+                        const r = await fetch(url, { credentials: 'include' });
+                        return r.ok ? await r.json() : null;
+                    } catch (e) {
+                        return null;
+                    }
                 }
-            """)
+            """, target_url)
             if res and isinstance(res, dict):
                 items = res.get("items", []) or res.get("gizmos", [])
                 projects = []
@@ -185,13 +200,18 @@ class UiDrivenTransport(ChatGPTTransport):
     async def fetch_project_detail(self, project_id: str) -> Optional[Project]:
         """Fetch project details via UI page evaluation."""
         page = await self._ensure_browser()
+        target_url = f"{self.base_url}/backend-api/gizmos/{project_id}"
         try:
-            data = await page.evaluate(f"""
-                async () => {{
-                    const r = await fetch('/backend-api/gizmos/{project_id}');
-                    return r.ok ? await r.json() : null;
-                }}
-            """)
+            data = await page.evaluate("""
+                async (url) => {
+                    try {
+                        const r = await fetch(url, { credentials: 'include' });
+                        return r.ok ? await r.json() : null;
+                    } catch (e) {
+                        return null;
+                    }
+                }
+            """, target_url)
             if data:
                 gizmo = data.get("gizmo", data)
                 disp = gizmo.get("display", {})
@@ -217,14 +237,19 @@ class UiDrivenTransport(ChatGPTTransport):
         query = f"/backend-api/conversations?offset={offset}&limit={limit}&order=updated"
         if project_id:
             query += f"&gizmo_id={project_id}"
+        target_url = f"{self.base_url}{query}"
 
         try:
-            data = await page.evaluate(f"""
-                async () => {{
-                    const r = await fetch('{query}');
-                    return r.ok ? await r.json() : null;
-                }}
-            """)
+            data = await page.evaluate("""
+                async (url) => {
+                    try {
+                        const r = await fetch(url, { credentials: 'include' });
+                        return r.ok ? await r.json() : null;
+                    } catch (e) {
+                        return null;
+                    }
+                }
+            """, target_url)
             if data and isinstance(data, dict):
                 items = data.get("items", [])
                 total = data.get("total", len(items))
@@ -242,17 +267,51 @@ class UiDrivenTransport(ChatGPTTransport):
     async def fetch_conversation_tree(self, conversation_id: str) -> Dict[str, Any]:
         """Fetch conversation DAG tree via UI evaluation."""
         page = await self._ensure_browser()
+        target_url = f"{self.base_url}/backend-api/conversation/{conversation_id}"
+        script = """
+        async (url) => {
+            try {
+                const r = await fetch(url, { credentials: 'include' });
+                const text = await r.text();
+                return {
+                    status: r.status,
+                    ok: r.ok,
+                    text: text
+                };
+            } catch (err) {
+                return {
+                    status: 0,
+                    ok: false,
+                    error: err.toString()
+                };
+            }
+        }
+        """
         try:
-            data = await page.evaluate(f"""
-                async () => {{
-                    const r = await fetch('/backend-api/conversation/{conversation_id}');
-                    return r.ok ? await r.json() : null;
-                }}
-            """)
+            result = await page.evaluate(script, target_url)
+            if not isinstance(result, dict):
+                raise TransportError("Empty response from conversation tree evaluation", mode=self.mode)
+            status = result.get("status", 0)
+            raw_text = result.get("text", "")
+            if not result.get("ok"):
+                if status == 404:
+                    raise ConversationNotFoundError(f"404 Not Found from UI evaluation: {raw_text[:200]}", status_code=404, mode=self.mode)
+                elif status == 401:
+                    raise SessionExpiredError(f"401 Unauthorized from UI evaluation: {raw_text[:200]}", status_code=401, mode=self.mode)
+                raise TransportError(f"UI evaluation failed (status {status}): {result.get('error') or raw_text[:200]}", status_code=status, mode=self.mode)
+
+            import json
+            try:
+                data = json.loads(raw_text)
+            except Exception:
+                data = raw_text
+
             if data and isinstance(data, dict):
                 return data
             raise TransportError("Empty response from conversation tree evaluation", mode=self.mode)
         except Exception as e:
+            if isinstance(e, TransportError):
+                raise
             raise TransportError(f"UI_DRIVEN fetch_conversation_tree failed: {e}", mode=self.mode) from e
 
     async def send_message_stream(
@@ -384,13 +443,13 @@ class UiDrivenTransport(ChatGPTTransport):
                     async ({url, token}) => {
                         const headers = token ? {'Authorization': 'Bearer ' + token} : {};
                         try {
-                            const r = await fetch(url, {headers});
+                            const r = await fetch(url, {headers, credentials: 'include'});
                             return r.ok ? await r.json() : null;
                         } catch (e) {
                             return null;
                         }
                     }
-                """, {"url": f"/backend-api/conversation/{conv_id}", "token": token})
+                """, {"url": f"{self.base_url}/backend-api/conversation/{conv_id}", "token": token})
 
                 if tree and isinstance(tree, dict) and tree.get("current_node"):
                     canonical_assistant_id = tree["current_node"]

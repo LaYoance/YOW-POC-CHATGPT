@@ -67,8 +67,8 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-### Étape 2 : Exécution de la Suite de Tests (61 tests validés)
-Tous les tests sont conçus pour s'exécuter hors-ligne grâce au mock haute-fidélité `FakeChatGPTServer` :
+### Étape 2 : Exécution de la Suite de Tests (70 tests validés)
+Tous les tests sont conçus pour s'exécuter de façon autonome :
 ```bash
 source venv/bin/activate
 
@@ -78,10 +78,13 @@ pytest tests/test_acceptance_criteria.py -v
 # 2. Validation du téléchargement sandbox Code Interpreter
 pytest tests/test_interpreter_download.py -v
 
-# 3. Exécution globale (61 tests)
+# 3. Validation des tests de régression et durcissements
+pytest tests/test_tier1_features/test_defect_regressions.py -v
+
+# 4. Exécution globale (70 tests)
 pytest tests/ -v
 ```
-*Résultat attendu : 61 passed.*
+*Résultat attendu : 70 passed.*
 
 ### Étape 3 : Lancement de l'Application
 ```bash
@@ -106,6 +109,19 @@ L'interface est accessible sur `http://127.0.0.1:8000`.
 ---
 
 ## 5. Changelog / Release Notes
+
+- **v1.3.0** (2026-10-04) :
+  - **Résilience UI_DRIVEN** : Navigation automatique vers `base_url` et conversion stricte des requêtes DOM en URLs absolues, éliminant les erreurs `TypeError: Failed to parse URL`.
+  - **Typage & Propagation 404** : Introduction de `ConversationNotFoundError`, interceptant proprement les conversations supprimées amont (`conversation_deleted`).
+  - **Court-circuit immédiat du routeur** : Interruption directe de la boucle de repli lors d'un 404 amont évitant l'épuisement redondant de la chaîne de transport.
+  - **Statut HTTP 404 sur `/api/conversations/{id}/branch`** : Retourne une erreur 404 explicite au lieu d'une 500 interne.
+
+- **v1.2.0** (2026-10-02) :
+  - **Anti-doublon router** : Verrou par conversation + détection de soumission potentiellement acceptée + interdiction de repli concurrent + repli d'incertitude `{"event": "uncertain"}`.
+  - **Validation stricte UI-driven** : Rejet systématique en cas de timeout (`generation_completed=False`), texte vide ou identifiants non confirmés.
+  - **Réconciliation DAG SyncService** : Remplacement de l'UUID utilisateur temporaire par l'identifiant officiel de chatgpt.com après l'envoi.
+  - **Routeur partagé** : Instance globale unique `get_shared_router()` partagée par toutes les routes et services, respect strict des modes forcés.
+  - **Assainissement HTML** : Intégration de DOMPurify 3.1.6 dans `app.js` et `index.html` contre toute tentative d'injection XSS.
 
 - **v1.1.0** (2026-10-01) :
   - **Cloudflare & Sentinel Resilience** : Intégration du mode `--headless=new` natif Chromium évitant les détections d'automatisation et blocages Turnstile 403.

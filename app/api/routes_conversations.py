@@ -6,6 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse
 
+from app.transports.base import ConversationNotFoundError, SessionExpiredError, TransportError
 from app.models.conversation import ActiveBranchResponse, Conversation, PaginatedConversations
 from app.services.conversation_service import ConversationService
 
@@ -68,6 +69,15 @@ async def get_active_branch(
     """
     try:
         return await service.get_active_branch(conversation_id=conversation_id, force_sync=sync)
+    except ConversationNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except SessionExpiredError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except TransportError as e:
+        status_code = e.status_code if e.status_code and 400 <= e.status_code < 600 else 500
+        raise HTTPException(status_code=status_code, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

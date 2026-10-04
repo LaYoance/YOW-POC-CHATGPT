@@ -5,6 +5,7 @@ Transports module exports (R4).
 from app.transports.base import (
     ChatGPTTransport,
     CloudflareChallengeError,
+    ConversationNotFoundError,
     RateLimitError,
     SessionExpiredError,
     TransportError,
@@ -18,6 +19,7 @@ __all__ = [
     "ChatGPTTransport",
     "TransportError",
     "SessionExpiredError",
+    "ConversationNotFoundError",
     "CloudflareChallengeError",
     "RateLimitError",
     "DirectHttpTransport",
