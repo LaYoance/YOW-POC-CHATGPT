@@ -55,7 +55,37 @@ async def get_conversation(
     conv = service.conversation_repo.get_conversation(conversation_id)
     if not conv:
         raise HTTPException(status_code=404, detail=f"Conversation {conversation_id} not found")
-    return conv
+from pydantic import BaseModel
+
+
+class RenameConversationRequest(BaseModel):
+    title: str
+
+
+@router.patch("/{conversation_id}")
+@router.post("/{conversation_id}/rename")
+async def rename_conversation(
+    conversation_id: str,
+    payload: RenameConversationRequest,
+    service: ConversationService = Depends(get_conversation_service),
+):
+    """Rename a conversation upstream and update local records."""
+    if not payload.title.strip():
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    try:
+        new_title = await service.rename_conversation(conversation_id, payload.title)
+        return {"ok": True, "conversation_id": conversation_id, "title": new_title}
+    except ConversationNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except SessionExpiredError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except TransportError as e:
+        status_code = e.status_code if e.status_code and 400 <= e.status_code < 600 else 500
+        raise HTTPException(status_code=status_code, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{conversation_id}/branch", response_model=ActiveBranchResponse)

@@ -80,7 +80,7 @@ class BrowserFetchTransport(ChatGPTTransport):
 
             self._context = await self._playwright.chromium.launch_persistent_context(
                 user_data_dir=str(self.user_data_dir),
-                headless=False,
+                headless=self.headless,
                 args=args,
                 viewport={"width": 1280, "height": 800},
                 user_agent=(
@@ -333,6 +333,19 @@ class BrowserFetchTransport(ChatGPTTransport):
             if isinstance(e, TransportError):
                 raise
             raise TransportError(f"BROWSER_FETCH fetch_conversation_tree failed: {e}", mode=self.mode) from e
+
+    async def rename_conversation(self, conversation_id: str, title: str) -> None:
+        """Rename a conversation via PATCH /backend-api/conversation/{id}."""
+        try:
+            await self._execute_fetch_json(
+                f"/backend-api/conversation/{conversation_id}",
+                method="PATCH",
+                body={"title": title},
+            )
+        except Exception as e:
+            if isinstance(e, TransportError):
+                raise
+            raise TransportError(f"BROWSER_FETCH rename_conversation failed: {e}", mode=self.mode) from e
 
     async def send_message_stream(
         self,

@@ -11,11 +11,15 @@ from typing import Any, Dict, Optional
 try:
     import pydantic_settings
     from pydantic_settings import BaseSettings as _BaseSettings, SettingsConfigDict as _SettingsConfigDict
-    from pydantic import Field
+    from pydantic import Field, field_validator
     HAS_PYDANTIC_SETTINGS = True
 except ImportError:
     HAS_PYDANTIC_SETTINGS = False
     from app.models.base import BaseModel as _BaseSettings, Field, ConfigDict as _SettingsConfigDict
+    def field_validator(*args, **kwargs):
+        def decorator(f):
+            return f
+        return decorator
 
 
 class Settings(_BaseSettings):
@@ -24,6 +28,14 @@ class Settings(_BaseSettings):
     APP_NAME: str = "YOW-ChatGPT-Integration-POC"
     ENV: str = "development"
     DEBUG: bool = False
+
+    @field_validator("DEBUG", mode="before")
+    @classmethod
+    def _parse_debug_flag(cls, v: Any) -> bool:
+        if isinstance(v, str):
+            return v.lower() in ("1", "true", "yes", "on", "debug")
+        return bool(v)
+
     HOST: str = "127.0.0.1"
     PORT: int = 8000
 

@@ -253,6 +253,14 @@ class TransportRouter:
             lambda t: t.fetch_conversation_tree(conversation_id=conversation_id),
         )
 
+    async def rename_conversation(self, conversation_id: str, title: str) -> None:
+        """Rename conversation with fallback."""
+        await self._execute_with_failover(
+            "rename_conversation",
+            conversation_id,
+            lambda t: t.rename_conversation(conversation_id=conversation_id, title=title),
+        )
+
     async def _get_submission_lock(self, key: str) -> asyncio.Lock:
         async with self._locks_guard:
             if key not in self._submission_locks:
@@ -277,7 +285,7 @@ class TransportRouter:
             elif self.last_successful_mode:
                 modes_to_try = [self.last_successful_mode] + [m for m in self.fallback_chain if m != self.last_successful_mode]
             else:
-                modes_to_try = [TransportMode.UI_DRIVEN, TransportMode.BROWSER_FETCH, TransportMode.DIRECT_HTTP]
+                modes_to_try = [TransportMode.BROWSER_FETCH, TransportMode.DIRECT_HTTP, TransportMode.UI_DRIVEN]
 
             last_exception: Optional[Exception] = None
             submission_potentially_accepted = False

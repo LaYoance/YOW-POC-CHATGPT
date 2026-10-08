@@ -96,6 +96,14 @@ class ChatGPTTransport(ABC):
         """
         pass
 
+    async def rename_conversation(self, conversation_id: str, title: str) -> None:
+        """Rename a conversation upstream. Transports that cannot do it keep this default."""
+        raise TransportError(
+            f"{self.mode.value} does not support rename_conversation",
+            status_code=501,
+            mode=self.mode,
+        )
+
     @abstractmethod
     async def get_interpreter_download_url(
         self,

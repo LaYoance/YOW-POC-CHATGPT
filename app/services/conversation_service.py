@@ -241,6 +241,25 @@ class ConversationService:
             total_messages=len(active_messages),
         )
 
+    async def rename_conversation(self, conversation_id: str, title: str) -> str:
+        """
+        Rename a conversation upstream, then mirror the new title in local SQLite.
+        Returns the normalized title actually applied.
+        """
+        clean = " ".join((title or "").split())
+        if not clean:
+            raise ValueError("Title cannot be empty")
+        clean = clean[:200]
+
+        await self.transport_router.rename_conversation(conversation_id, clean)
+
+        with self.conversation_repo.db.get_connection() as conn:
+            conn.execute(
+                "UPDATE conversations SET title = ?, last_synced_at = CURRENT_TIMESTAMP WHERE id = ?;",
+                (clean, conversation_id),
+            )
+        return clean
+
     async def get_active_branch(
         self,
         conversation_id: str,

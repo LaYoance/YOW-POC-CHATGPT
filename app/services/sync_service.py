@@ -157,6 +157,76 @@ class SyncService:
                 }
                 return
 
+    async def create_titled_conversation(
+        self,
+        project_id: Optional[str],
+        title: str,
+        prompt: str,
+        model: str = "auto",
+    ) -> Dict[str, Any]:
+        """
+        Creates a conversation by sending `prompt` as first message (inside `project_id` if given),
+        waits for the full assistant reply, then renames the conversation to `title`.
+
+        The rename happens AFTER the reply because ChatGPT auto-generates a title once the first
+        turn completes and would overwrite an earlier rename. The final title is verified upstream
+        and the rename is retried once if the auto-title won the race.
+        """
+        clean_title = " ".join((title or "").split())[:200]
+        if not clean_title:
+            raise ValueError("Title cannot be empty")
+        if not (prompt or "").strip():
+            raise ValueError("Prompt cannot be empty")
+
+        conversation_id: Optional[str] = None
+        reply_text = ""
+        async for event in self.send_and_stream(
+            conversation_id=None,
+            project_id=project_id,
+            prompt=prompt,
+            model=model,
+        ):
+            kind = event.get("event")
+            if event.get("conversation_id"):
+                conversation_id = event["conversation_id"]
+            if kind == "done":
+                reply_text = event.get("text", "")
+            elif kind in ("error", "uncertain"):
+                raise RuntimeError(event.get("error") or f"Conversation creation ended with '{kind}'")
+
+        if not conversation_id:
+            raise RuntimeError("ChatGPT did not return a conversation id")
+
+        applied = await self.conversation_service.rename_conversation(conversation_id, clean_title)
+
+        title_verified = False
+        for attempt in range(2):
+            try:
+                tree = await self.transport_router.fetch_conversation_tree(conversation_id)
+                current = (tree or {}).get("title") if isinstance(tree, dict) else None
+            except Exception as e:
+                logger.warning(f"Title verification failed for {conversation_id}: {e}")
+                break
+            if current == applied:
+                title_verified = True
+                break
+            if attempt == 0:
+                await asyncio.sleep(2.0)
+                applied = await self.conversation_service.rename_conversation(conversation_id, clean_title)
+
+        return {
+            "conversation_id": conversation_id,
+            "title": applied,
+            "title_verified": title_verified,
+            "project_id": project_id,
+            "url": (
+                f"https://chatgpt.com/g/{project_id}/c/{conversation_id}"
+                if project_id
+                else f"https://chatgpt.com/c/{conversation_id}"
+            ),
+            "reply_preview": reply_text[:400],
+        }
+
     async def poll_site_updates(self, limit: int = 10) -> Dict[str, Any]:
         """
         Polls upstream for recent updates on chatgpt.com (A4).

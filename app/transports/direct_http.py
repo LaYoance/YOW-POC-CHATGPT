@@ -248,6 +248,21 @@ class DirectHttpTransport(ChatGPTTransport):
                 raise
             raise TransportError(f"DIRECT_HTTP fetch_conversation_tree failed: {e}", mode=self.mode) from e
 
+    async def rename_conversation(self, conversation_id: str, title: str) -> None:
+        """Rename a conversation via PATCH /backend-api/conversation/{id}."""
+        headers = await self._get_auth_headers()
+        headers["Content-Type"] = "application/json"
+        url = f"{self.base_url}/backend-api/conversation/{conversation_id}"
+
+        try:
+            async with AsyncSession(impersonate=self._effective_impersonate) as client:
+                res = await client.patch(url, headers=headers, json={"title": title}, timeout=25)
+                self._check_response_status(res.status_code, res.text)
+        except Exception as e:
+            if isinstance(e, TransportError):
+                raise
+            raise TransportError(f"DIRECT_HTTP rename_conversation failed: {e}", mode=self.mode) from e
+
     async def send_message_stream(
         self,
         request: SendMessageRequest,

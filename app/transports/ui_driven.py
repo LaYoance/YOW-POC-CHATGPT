@@ -78,7 +78,7 @@ class UiDrivenTransport(ChatGPTTransport):
 
             self._context = await self._playwright.chromium.launch_persistent_context(
                 user_data_dir=str(self.user_data_dir),
-                headless=False,
+                headless=self.headless,
                 args=args,
                 viewport={"width": 1280, "height": 800},
                 user_agent=(
@@ -344,10 +344,13 @@ class UiDrivenTransport(ChatGPTTransport):
             if not input_el:
                 raise TransportError("Chat input element not found in UI", mode=self.mode)
 
-            # Focus and type message using real keystrokes to trigger React/ProseMirror state
+            # Focus and insert message using fast input simulation to trigger React/ProseMirror state
             await input_el.click()
             await asyncio.sleep(0.2)
-            await page.keyboard.type(request.content, delay=15)
+            try:
+                await page.keyboard.insert_text(request.content)
+            except Exception:
+                await page.keyboard.type(request.content, delay=0)
             await asyncio.sleep(0.3)
 
             # Count existing turns to isolate newly streamed response

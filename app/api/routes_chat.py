@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.services.sync_service import SyncService
+from app.transports.base import SessionExpiredError, TransportError
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
 
@@ -59,6 +60,47 @@ async def send_prompt(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+class CreateConversationRequest(BaseModel):
+    title: str
+    prompt: str
+    project_id: Optional[str] = None
+    model: str = "auto"
+
+
+@router.post("/conversations")
+async def create_conversation(
+    payload: CreateConversationRequest,
+    service: SyncService = Depends(get_sync_service),
+):
+    """
+    Create a conversation (inside project_id if provided) from a first prompt, wait for the
+    complete reply and give the conversation its final title. Returns id, URL and title state.
+    """
+    if not payload.title.strip():
+        raise HTTPException(status_code=400, detail="Title cannot be empty")
+    if not payload.prompt.strip():
+        raise HTTPException(status_code=400, detail="Prompt cannot be empty")
+    try:
+        return await service.create_titled_conversation(
+            project_id=payload.project_id,
+            title=payload.title,
+            prompt=payload.prompt,
+            model=payload.model,
+        )
+    except SessionExpiredError as e:
+        raise HTTPException(status_code=401, detail=f"Session ChatGPT expirée (token invalidé amont) : {e}")
+    except TransportError as e:
+        status_code = e.status_code if e.status_code and 400 <= e.status_code < 600 else 502
+        raise HTTPException(status_code=status_code, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        err_str = str(e)
+        if "401" in err_str or "token_revoked" in err_str or "invalidated oauth token" in err_str:
+            raise HTTPException(status_code=401, detail=f"Session ChatGPT expirée ou révoquée par OpenAI : {err_str}")
+        raise HTTPException(status_code=502, detail=err_str)
 
 
 @router.post("/poll-site")
