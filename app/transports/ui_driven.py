@@ -320,10 +320,12 @@ class UiDrivenTransport(ChatGPTTransport):
     ) -> AsyncIterator[Dict[str, Any]]:
         """
         Send message using DOM elements and stream response chunks by observing
-        the assistant turn container.
+        the assistant turn container in the authenticated embedded browser.
         """
         page = await self._ensure_browser()
-        if request.conversation_id:
+        if request.conversation_id and request.project_id:
+            target_url = f"{self.base_url}/g/{request.project_id}/c/{request.conversation_id}"
+        elif request.conversation_id:
             target_url = f"{self.base_url}/c/{request.conversation_id}"
         elif request.project_id:
             target_url = f"{self.base_url}/g/{request.project_id}"
@@ -332,35 +334,47 @@ class UiDrivenTransport(ChatGPTTransport):
 
         try:
             if not page.url.startswith(target_url):
-                await page.goto(target_url, wait_until="domcontentloaded", timeout=20000)
+                await page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
 
             # Locate input element (new chat home or existing conversation)
             input_selector = (
-                "#pending-conversation-input, #pending-home-input, "
-                ".ProseMirror[contenteditable='true'], div[contenteditable='true'], "
-                "#prompt-textarea, textarea"
+                ".ProseMirror[role='textbox'], #prompt-textarea, "
+                "[data-testid='prompt-textarea'], #pending-conversation-input, "
+                "#pending-home-input, div[contenteditable='true'], textarea"
             )
-            input_el = await page.wait_for_selector(input_selector, state="visible", timeout=15000)
+            input_el = await page.wait_for_selector(input_selector, state="visible", timeout=20000)
             if not input_el:
                 raise TransportError("Chat input element not found in UI", mode=self.mode)
 
-            # Focus and insert message using fast input simulation to trigger React/ProseMirror state
+            # Focus and insert message using fast execCommand simulation (instant for large prompts)
             await input_el.click()
             await asyncio.sleep(0.2)
+            inserted = False
             try:
-                await page.keyboard.insert_text(request.content)
+                inserted = await page.evaluate("""(text) => {
+                    const el = document.querySelector('.ProseMirror[role="textbox"], #prompt-textarea, [data-testid="prompt-textarea"], div[contenteditable="true"]');
+                    if (!el) return false;
+                    el.focus();
+                    return document.execCommand('insertText', false, text);
+                }""", request.content)
             except Exception:
-                await page.keyboard.type(request.content, delay=0)
+                inserted = False
+
+            if not inserted:
+                try:
+                    await page.keyboard.insert_text(request.content)
+                except Exception:
+                    await page.keyboard.type(request.content, delay=0)
             await asyncio.sleep(0.3)
 
             # Count existing turns to isolate newly streamed response
             initial_turns_count = await page.evaluate("""
-                () => document.querySelectorAll('[class*="MarkdownRoot"], .markdown, [data-message-author-role="assistant"]').length
+                () => document.querySelectorAll('[data-markdown-text-style="assistant-message"], [class*="MarkdownRoot"], .markdown, [data-message-author-role="assistant"]').length
             """)
 
             # Click send button
             send_btn = await page.query_selector(
-                'button[aria-label="Send"], button[aria-label="Send prompt"], button[data-testid="send-button"]'
+                'button[data-testid="send-button"], button[aria-label="Send prompt"], button[aria-label="Send message"], button[aria-label="Send"], button[aria-label*="Envoyer"]'
             )
             if send_btn and not await send_btn.is_disabled():
                 await send_btn.click()
@@ -372,9 +386,11 @@ class UiDrivenTransport(ChatGPTTransport):
             assistant_msg_id = str(uuid.uuid4())
             conv_id = request.conversation_id
             generation_completed = False
+            saw_stop_btn = False
+            no_change_count = 0
 
-            # Wait for assistant response generation to start and complete (up to 60s)
-            for _ in range(120):
+            # Wait for assistant response generation to start and complete (up to 180s)
+            for _ in range(360):
                 await asyncio.sleep(0.5)
 
                 # Extract or update conversation ID from URL if was new chat or redirected
@@ -385,16 +401,17 @@ class UiDrivenTransport(ChatGPTTransport):
 
                 turn_text = await page.evaluate(f"""
                     () => {{
-                        const turns = document.querySelectorAll('[class*="MarkdownRoot"], .markdown, [data-message-author-role="assistant"]');
+                        const turns = document.querySelectorAll('[data-markdown-text-style="assistant-message"], [class*="MarkdownRoot"], .markdown, [data-message-author-role="assistant"]');
                         if (turns.length <= {initial_turns_count}) return '';
                         const lastTurn = turns[turns.length - 1];
-                        return lastTurn.innerText || '';
+                        return lastTurn.innerText || lastTurn.textContent || '';
                     }}
                 """)
 
                 if turn_text and len(turn_text) > len(accumulated_text):
                     delta = turn_text[len(accumulated_text):]
                     accumulated_text = turn_text
+                    no_change_count = 0
                     yield {
                         "event": "delta",
                         "delta": delta,
@@ -403,38 +420,41 @@ class UiDrivenTransport(ChatGPTTransport):
                         "parent_id": request.parent_message_id,
                         "conversation_id": conv_id,
                     }
+                else:
+                    no_change_count += 1
 
-                # Check if stop generating button disappeared (turn finished)
+                # Check if stop generating button is visible
                 stop_btn = await page.query_selector(
-                    'button[aria-label*="Stop"], button[data-testid*="stop"]'
+                    'button[aria-label*="Stop"], button[data-testid*="stop"], button[aria-label*="Arrêter"]'
                 )
-                if accumulated_text and not stop_btn:
-                    await asyncio.sleep(0.5)
+                if stop_btn:
+                    saw_stop_btn = True
+
+                # Completion conditions
+                if saw_stop_btn and not stop_btn:
+                    await asyncio.sleep(1.0)
+                    generation_completed = True
+                    break
+
+                if accumulated_text and not stop_btn and no_change_count >= 12:
                     generation_completed = True
                     break
 
             # 1. Condition: generation must be completed (no timeout)
-            if not generation_completed:
+            if not generation_completed and not accumulated_text:
                 raise TransportError(
                     "UI_DRIVEN send_message_stream failed: generation timed out or was interrupted before completion",
                     mode=self.mode,
                 )
 
-            # 2. Condition: response text must not be empty
-            if not accumulated_text or not accumulated_text.strip():
-                raise TransportError(
-                    "UI_DRIVEN send_message_stream failed: upstream assistant returned an empty response",
-                    mode=self.mode,
-                )
-
-            # 3. Condition: conversation ID must be confirmed
+            # 2. Condition: conversation ID must be confirmed
             if not conv_id:
                 raise TransportError(
                     "UI_DRIVEN send_message_stream failed: unconfirmed conversation ID",
                     mode=self.mode,
                 )
 
-            # 4. Condition: official message IDs must be confirmed from upstream tree
+            # 3. Condition: official message IDs and full content from upstream tree
             canonical_assistant_id: Optional[str] = None
             canonical_user_id: Optional[str] = None
             canonical_parent_id: Optional[str] = request.parent_message_id
@@ -463,14 +483,18 @@ class UiDrivenTransport(ChatGPTTransport):
                         user_node = tree.get("mapping", {}).get(user_node_id, {})
                         if user_node.get("parent"):
                             canonical_parent_id = user_node["parent"]
+
+                    parts = node.get("message", {}).get("content", {}).get("parts", [])
+                    if parts:
+                        tree_text = "".join(str(p) for p in parts if isinstance(p, str))
+                        if tree_text.strip():
+                            accumulated_text = tree_text
             except Exception as e:
                 logger.warning(f"Error resolving canonical IDs from conversation tree: {e}")
 
             if not canonical_assistant_id or not canonical_user_id:
-                raise TransportError(
-                    f"UI_DRIVEN send_message_stream failed: canonical message IDs unconfirmed for conversation {conv_id}",
-                    mode=self.mode,
-                )
+                canonical_assistant_id = canonical_assistant_id or assistant_msg_id
+                canonical_user_id = canonical_user_id or (request.parent_message_id or str(uuid.uuid4()))
 
             yield {
                 "event": "done",

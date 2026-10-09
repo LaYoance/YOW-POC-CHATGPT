@@ -285,7 +285,7 @@ class TransportRouter:
             elif self.last_successful_mode:
                 modes_to_try = [self.last_successful_mode] + [m for m in self.fallback_chain if m != self.last_successful_mode]
             else:
-                modes_to_try = [TransportMode.BROWSER_FETCH, TransportMode.DIRECT_HTTP, TransportMode.UI_DRIVEN]
+                modes_to_try = [TransportMode.UI_DRIVEN, TransportMode.BROWSER_FETCH, TransportMode.DIRECT_HTTP]
 
             last_exception: Optional[Exception] = None
             submission_potentially_accepted = False
