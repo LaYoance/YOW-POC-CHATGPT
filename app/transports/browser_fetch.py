@@ -79,6 +79,7 @@ class BrowserFetchTransport(ChatGPTTransport):
                 "--disable-setuid-sandbox",
                 "--disable-infobars",
                 "--window-size=1280,800",
+                "--disable-dev-shm-usage",
             ]
             if self.headless:
                 args.append("--headless=new")

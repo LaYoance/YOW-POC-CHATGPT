@@ -69,11 +69,11 @@ class TransportRouter:
             TransportMode.UI_DRIVEN: UiDrivenTransport(session_repo=self.session_repo),
         }
 
-        # Sequence of execution
+        # Sequence of execution: UI_DRIVEN first (embedded browser)
         self.fallback_chain = [
-            TransportMode.DIRECT_HTTP,
-            TransportMode.BROWSER_FETCH,
             TransportMode.UI_DRIVEN,
+            TransportMode.BROWSER_FETCH,
+            TransportMode.DIRECT_HTTP,
         ]
 
         self.last_successful_mode: Optional[TransportMode] = None

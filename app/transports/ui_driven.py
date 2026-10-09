@@ -77,6 +77,7 @@ class UiDrivenTransport(ChatGPTTransport):
                 "--disable-setuid-sandbox",
                 "--disable-infobars",
                 "--window-size=1280,800",
+                "--disable-dev-shm-usage",
             ]
             if self.headless:
                 args.append("--headless=new")
@@ -341,18 +342,24 @@ class UiDrivenTransport(ChatGPTTransport):
             if not page.url.startswith(target_url):
                 await page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
 
-            # Locate input element (new chat home or existing conversation)
+            # Locate input element using dynamic locator to survive React hydration
             input_selector = (
                 ".ProseMirror[role='textbox'], #prompt-textarea, "
                 "[data-testid='prompt-textarea'], #pending-conversation-input, "
                 "#pending-home-input, div[contenteditable='true'], textarea"
             )
-            input_el = await page.wait_for_selector(input_selector, state="visible", timeout=20000)
-            if not input_el:
-                raise TransportError("Chat input element not found in UI", mode=self.mode)
+            input_locator = page.locator(input_selector).first
+            try:
+                await input_locator.wait_for(state="visible", timeout=25000)
+                await asyncio.sleep(0.5)
+                await input_locator.click()
+            except Exception as e:
+                # Detect if Cloudflare interstitial is present
+                if await page.locator("iframe[src*='challenges.cloudflare.com'], #challenge-stage, .cf-turnstile").count() > 0:
+                    raise CloudflareChallengeError("Défi Cloudflare Turnstile détecté sur la page. Ouvrez le navigateur embarqué pour le valider.", status_code=403, mode=self.mode)
+                raise TransportError(f"Chat input element not found or not clickable: {e}", mode=self.mode) from e
 
             # Focus and insert message using fast execCommand simulation (instant for large prompts)
-            await input_el.click()
             await asyncio.sleep(0.2)
             inserted = False
             try:
@@ -360,7 +367,14 @@ class UiDrivenTransport(ChatGPTTransport):
                     const el = document.querySelector('.ProseMirror[role="textbox"], #prompt-textarea, [data-testid="prompt-textarea"], div[contenteditable="true"]');
                     if (!el) return false;
                     el.focus();
-                    return document.execCommand('insertText', false, text);
+                    const success = document.execCommand('insertText', false, text);
+                    if (success && (el.innerText || el.value || '').trim().length > 0) return true;
+                    if (el.tagName === 'TEXTAREA') {
+                        el.value = text;
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        return true;
+                    }
+                    return false;
                 }""", request.content)
             except Exception:
                 inserted = False
@@ -368,22 +382,37 @@ class UiDrivenTransport(ChatGPTTransport):
             if not inserted:
                 try:
                     await page.keyboard.insert_text(request.content)
+                    inserted = True
                 except Exception:
+                    pass
+
+            if not inserted:
+                if len(request.content) < 500:
                     await page.keyboard.type(request.content, delay=0)
-            await asyncio.sleep(0.3)
+                else:
+                    raise TransportError(
+                        f"Prompt trop volumineux ({len(request.content)} caractères) pour une simulation clavier directe.",
+                        mode=self.mode
+                    )
+            await asyncio.sleep(0.4)
 
             # Count existing turns to isolate newly streamed response
             initial_turns_count = await page.evaluate("""
                 () => document.querySelectorAll('[data-markdown-text-style="assistant-message"], [class*="MarkdownRoot"], .markdown, [data-message-author-role="assistant"]').length
             """)
 
-            # Click send button
-            send_btn = await page.query_selector(
-                'button[data-testid="send-button"], button[aria-label="Send prompt"], button[aria-label="Send message"], button[aria-label="Send"], button[aria-label*="Envoyer"]'
+            # Click send button using dynamic locator
+            send_selector = (
+                'button[data-testid="send-button"], button[aria-label="Send prompt"], '
+                'button[aria-label="Send message"], button[aria-label="Send"], button[aria-label*="Envoyer"]'
             )
-            if send_btn and not await send_btn.is_disabled():
-                await send_btn.click()
-            else:
+            send_locator = page.locator(send_selector).first
+            try:
+                if await send_locator.is_visible() and not await send_locator.is_disabled():
+                    await send_locator.click()
+                else:
+                    await page.keyboard.press("Enter")
+            except Exception:
                 await page.keyboard.press("Enter")
 
             # Poll for assistant response turn
