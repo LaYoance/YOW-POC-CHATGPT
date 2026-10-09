@@ -65,6 +65,11 @@ class BrowserFetchTransport(ChatGPTTransport):
                 return self._page
 
             self.user_data_dir.mkdir(parents=True, exist_ok=True)
+            for sf in ("SingletonLock", "SingletonSocket", "SingletonCookie"):
+                try:
+                    (self.user_data_dir / sf).unlink(missing_ok=True)
+                except Exception:
+                    pass
             if not self._playwright:
                 self._playwright = await async_playwright().start()
 
