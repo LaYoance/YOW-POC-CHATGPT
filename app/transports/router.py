@@ -282,6 +282,10 @@ class TransportRouter:
         async with lock:
             if self.forced_mode:
                 modes_to_try = [self.forced_mode]
+            elif not request.conversation_id:
+                # Création d'une nouvelle conversation : privilégier l'API headless (BROWSER_FETCH)
+                # pour ne jamais risquer de polluer un onglet ouvert
+                modes_to_try = [TransportMode.BROWSER_FETCH, TransportMode.DIRECT_HTTP, TransportMode.UI_DRIVEN]
             elif self.last_successful_mode:
                 modes_to_try = [self.last_successful_mode] + [m for m in self.fallback_chain if m != self.last_successful_mode]
             else:

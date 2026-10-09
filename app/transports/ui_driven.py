@@ -334,13 +334,28 @@ class UiDrivenTransport(ChatGPTTransport):
         elif request.conversation_id:
             target_url = f"{self.base_url}/c/{request.conversation_id}"
         elif request.project_id:
-            target_url = f"{self.base_url}/g/{request.project_id}"
+            target_url = f"{self.base_url}/g/{request.project_id}/project"
         else:
             target_url = f"{self.base_url}/"
 
         try:
-            if not page.url.startswith(target_url):
-                await page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+            if not request.conversation_id:
+                # NOUVELLE CONVERSATION : Interdiction absolue de poster dans une conversation existante (/c/)
+                if "/c/" in page.url or page.url.rstrip("/") != target_url.rstrip("/"):
+                    await page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+                    await asyncio.sleep(1)
+
+                if "/c/" in page.url:
+                    new_btn = page.locator('a[href*="/project"], [data-testid="new-chat-button"], button[aria-label*="New chat"], button[aria-label*="Nouvelle"]').first
+                    if await new_btn.is_visible():
+                        await new_btn.click()
+                        await asyncio.sleep(1)
+
+                if "/c/" in page.url:
+                    raise TransportError("Refus d'envoi : le navigateur est positionné sur une conversation existante et n'a pas pu ouvrir un fil vierge. L'envoi est annulé pour éviter de corrompre la conversation active.", mode=self.mode)
+            else:
+                if not page.url.startswith(target_url):
+                    await page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
 
             # Locate input element using dynamic locator to survive React hydration
             input_selector = (
