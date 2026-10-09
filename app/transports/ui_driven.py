@@ -249,7 +249,13 @@ class UiDrivenTransport(ChatGPTTransport):
             data = await page.evaluate("""
                 async (url) => {
                     try {
-                        const r = await fetch(url, { credentials: 'include' });
+                        let token = null;
+                        try {
+                            const s = await fetch("/api/auth/session").then(r => r.json());
+                            token = s?.accessToken;
+                        } catch {}
+                        const headers = token ? { "Authorization": `Bearer ${token}` } : {};
+                        const r = await fetch(url, { credentials: 'include', headers });
                         return r.ok ? await r.json() : null;
                     } catch (e) {
                         return null;
@@ -277,7 +283,13 @@ class UiDrivenTransport(ChatGPTTransport):
         script = """
         async (url) => {
             try {
-                const r = await fetch(url, { credentials: 'include' });
+                let token = null;
+                try {
+                    const s = await fetch("/api/auth/session").then(r => r.json());
+                    token = s?.accessToken;
+                } catch {}
+                const headers = token ? { "Authorization": `Bearer ${token}` } : {};
+                const r = await fetch(url, { credentials: 'include', headers });
                 const text = await r.text();
                 return {
                     status: r.status,
@@ -589,7 +601,13 @@ class UiDrivenTransport(ChatGPTTransport):
         url = f"{self.base_url}/backend-api/conversation/{conversation_id}/interpreter/download?{qs}"
         script = """
         async (targetUrl) => {
-            const res = await window.fetch(targetUrl, { credentials: 'include' });
+            let token = null;
+            try {
+                const s = await fetch("/api/auth/session").then(r => r.json());
+                token = s?.accessToken;
+            } catch {}
+            const headers = token ? { "Authorization": `Bearer ${token}` } : {};
+            const res = await window.fetch(targetUrl, { credentials: 'include', headers });
             if (!res.ok) throw new Error("HTTP " + res.status);
             return await res.json();
         }
@@ -603,7 +621,13 @@ class UiDrivenTransport(ChatGPTTransport):
         page = await self._ensure_browser()
         script = """
         async (targetUrl) => {
-            const res = await window.fetch(targetUrl, { credentials: 'include' });
+            let token = null;
+            try {
+                const s = await fetch("/api/auth/session").then(r => r.json());
+                token = s?.accessToken;
+            } catch {}
+            const headers = token ? { "Authorization": `Bearer ${token}` } : {};
+            const res = await window.fetch(targetUrl, { credentials: 'include', headers });
             if (!res.ok) throw new Error("HTTP " + res.status);
             const blob = await res.blob();
             return new Promise((resolve, reject) => {
