@@ -287,6 +287,7 @@ class DirectHttpTransport(ChatGPTTransport):
                 }
             ],
             "model": request.model or "auto",
+            "reasoning_effort": "high",
             "history_and_training_disabled": False,
         }
 
